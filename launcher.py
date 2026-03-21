@@ -1022,7 +1022,7 @@ class UniversalServiceLauncher:
 
     def is_port_available(self, host, port):
         """Проверка доступности порта."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s: ##
             try:
                 s.bind((host, port))
                 return True
