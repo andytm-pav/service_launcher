@@ -434,7 +434,7 @@ class UniversalServiceLauncher:
                     for pid in list(self.process_info.keys()):
                         if not psutil.pid_exists(pid):
                             service_name = self.process_info[pid]
-                            self.log(f"Процесс {service_name} (PID: {pid}) завершился")
+                            self.log(f"💀 Процесс {service_name} (PID: {pid}) завершился")
                             del self.process_info[pid]
 
                             # Обновление отображения
@@ -486,50 +486,126 @@ class UniversalServiceLauncher:
 
         return chain
 
-    def check_and_start_dependencies(self, service):
-        """Проверяет и запускает все зависимости сверху вниз."""
-        chain = self.find_dependency_chain(service)
+    def find_service_by_name(self, service_name):
+        """Найти сервис по имени."""
+        for s in self.project_data.get("services", []):
+            if s.get("name") == service_name:
+                return s
+        return None
 
-        if not chain:
-            return
+    def is_service_running(self, service_name):
+        """Проверить, запущен ли сервис."""
+        with self.process_lock:
+            return service_name in self.process_info.values()
 
-        # Переворачиваем цепочку (сверху вниз: от корня к целевому)
-        chain.reverse()
-
-        self.log(f"Цепочка зависимостей для {service.get('name')}: {' → '.join([s.get('name') for s in chain])}")
-
-        # Проверяем каждый сервис в цепочке
-        for s in chain:
-            service_name = s.get("name")
-
-            with self.process_lock:
-                is_running = service_name in self.process_info.values()
-
-            if not is_running:
-                self.log(f"Запуск {service_name} (в цепочке зависимостей)")
-                self.start_service(s, check_dependencies=False)
-                # Убрали time.sleep(2) - теперь ожидание внутри start_service
-
-    def start_service(self, service, check_dependencies=True):
-        """Запуск сервиса с проверкой всех зависимостей."""
+    def wait_for_service_ready(self, service, timeout=15):
+        """Ожидание готовности сервиса (порт или процесс)."""
+        start = time.time()
         service_name = service.get("name")
+
+        while time.time() - start < timeout:
+            # Проверяем, что процесс вообще жив
+            with self.process_lock:
+                if service_name not in self.process_info.values():
+                    time.sleep(0.5)
+                    continue
+
+            # Если есть порт - ждем, пока он откроется
+            if service.get("port"):
+                if not self.is_port_available(service.get("host", "127.0.0.1"), service["port"]):
+                    self.log(f"✅ Сервис {service_name} готов (порт {service['port']} открыт)")
+                    return True
+            else:
+                # Если порта нет, просто ждем 2 секунды
+                self.log(f"⏳ Сервис {service_name} запущен, даем время на инициализацию...")
+                time.sleep(2)
+                return True
+
+            time.sleep(0.5)
+
+        self.log(f"⚠️ Таймаут ожидания готовности {service_name}")
+        return False
+
+    def check_and_start_dependencies(self, service):
+        """Проверяет и запускает все зависимости сверху вниз с ожиданием готовности."""
+        service_name = service.get("name")
+
+        # Строим дерево зависимостей (всех предков)
+        def collect_all_dependencies(current_service, collected=None, visited=None):
+            """Собирает все зависимости рекурсивно (без дубликатов)."""
+            if collected is None:
+                collected = []
+            if visited is None:
+                visited = set()
+
+            current_name = current_service.get("name")
+            if current_name in visited:
+                return collected
+            visited.add(current_name)
+
+            # Сначала собираем зависимости текущего сервиса
+            deps = current_service.get("dependencies", [])
+            for dep_name in deps:
+                dep_service = self.find_service_by_name(dep_name)
+                if dep_service:
+                    # Рекурсивно собираем зависимости зависимости
+                    collect_all_dependencies(dep_service, collected, visited)
+                    collected.append(dep_service)
+
+            return collected
+
+        # Получаем всех предков (от корня к целевому)
+        all_deps = collect_all_dependencies(service, [], set())
+
+        # Убираем дубликаты, сохраняя порядок
+        seen = set()
+        unique_deps = []
+        for dep in all_deps:
+            dep_name = dep.get("name")
+            if dep_name not in seen:
+                seen.add(dep_name)
+                unique_deps.append(dep)
+
+        if unique_deps:
+            self.log(
+                f"📋 Цепочка зависимостей для {service_name}: {' → '.join([d.get('name') for d in unique_deps])} → {service_name}")
+
+        # Запускаем все зависимости по порядку (сверху вниз)
+        for dep in unique_deps:
+            dep_name = dep.get("name")
+
+            # Проверяем, не запущен ли уже
+            if not self.is_service_running(dep_name):
+                self.log(f"🔄 Запуск зависимости: {dep_name}")
+                self._start_single_service(dep)  # Используем новый метод
+
+                # Ждем, пока зависимость реально запустится
+                if not self.wait_for_service_ready(dep):
+                    self.log(f"❌ Ошибка: зависимость {dep_name} не запустилась", "error")
+                    return False
+
+        return True
+
+    def _start_single_service(self, service):
+        """Запуск одного сервиса без проверки зависимостей (внутренний метод)."""
+        service_name = service.get("name")
+
+        # ИНИЦИАЛИЗАЦИЯ ВСЕХ ПЕРЕМЕННЫХ В НАЧАЛЕ
+        root_dir = Path(self.project_data.get("root_dir", ""))
+        env = os.environ.copy()
+        startupinfo = None
+
+        # Windows-specific настройки
+        if sys.platform == 'win32':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
 
         # Проверяем не запущен ли уже
         with self.process_lock:
             if service_name in self.process_info.values():
                 self.log(f"Сервис {service_name} уже запущен")
-                return
-
-        # Если нужно, проверяем и запускаем все зависимости
-        if check_dependencies and self.project_data.get("settings", {}).get("auto_start_dependencies", True):
-            self.log(f"Проверка зависимостей для {service_name}")
-            self.check_and_start_dependencies(service)
-
-            # ВАЖНО: после запуска зависимостей снова проверяем не запустили ли целевой сервис
-            with self.process_lock:
-                if service_name in self.process_info.values():
-                    self.log(f"Сервис {service_name} был запущен через зависимости")
-                    return
+                return True
 
         # Проверка порта
         if service.get("port"):
@@ -538,12 +614,11 @@ class UniversalServiceLauncher:
                 self.kill_process_on_port(service["port"])
                 if not self.wait_for_port(service.get("host", "127.0.0.1"), service["port"], timeout=10):
                     self.log(f"Не удалось освободить порт {service['port']}", "error")
-                    return
+                    return False
 
-        # Запуск
+        # Получаем путь к скрипту
         script_path = Path(service.get("script", ""))
         if not script_path.is_absolute():
-            root_dir = Path(self.project_data.get("root_dir", ""))
             script_path = root_dir / script_path
 
         if script_path.exists():
@@ -552,11 +627,9 @@ class UniversalServiceLauncher:
 
                 if not Path(python_exe).exists():
                     self.log(f"Python не найден: {python_exe}", "error")
-                    return
+                    return False
 
-                env = os.environ.copy()
-
-                root_dir = Path(self.project_data.get("root_dir", ""))
+                # Настраиваем окружение
                 if root_dir.exists():
                     env["PYTHONPATH"] = str(root_dir)
 
@@ -566,13 +639,7 @@ class UniversalServiceLauncher:
                         env_path = root_dir / env_path
                     env.update(self.load_env_file(env_path))
 
-                self.log(f"Запуск {service_name} с Python: {python_exe}")
-
-                startupinfo = None
-                if sys.platform == 'win32':
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                self.log(f"🚀 Запуск {service_name} с Python: {python_exe}")
 
                 process = subprocess.Popen(
                     [python_exe, str(script_path)],
@@ -582,18 +649,46 @@ class UniversalServiceLauncher:
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
                 )
 
-                if self.wait_for_process_start(process, service):
-                    with self.process_lock:
-                        self.process_info[process.pid] = service_name
-                    self.log(f"Запущен {service_name} с PID: {process.pid}")
-                    self.root.after(0, self.refresh_display)
-                else:
-                    self.log(f"Ошибка запуска {service_name}", "error")
+                # Сохраняем в process_info
+                with self.process_lock:
+                    self.process_info[process.pid] = service_name
+
+                self.log(f"✅ Запущен {service_name} с PID: {process.pid}")
+                self.root.after(0, self.refresh_display)
+                return True
 
             except Exception as e:
-                self.log(f"Ошибка: {e}", "error")
+                self.log(f"❌ Ошибка: {e}", "error")
+                return False
         else:
-            self.log(f"Скрипт не найден: {script_path}", "error")
+            self.log(f"❌ Скрипт не найден: {script_path}", "error")
+            return False
+
+    def start_service(self, service, check_dependencies=True):
+        """Запуск сервиса с проверкой всех зависимостей."""
+        service_name = service.get("name")
+
+        # Проверяем не запущен ли уже
+        if self.is_service_running(service_name):
+            self.log(f"Сервис {service_name} уже запущен")
+            return True
+
+        # Проверяем и запускаем все зависимости
+        if check_dependencies and self.project_data.get("settings", {}).get("auto_start_dependencies", True):
+            self.log(f"🔍 Проверка зависимостей для {service_name}")
+
+            # Запускаем все зависимости сверху вниз
+            if not self.check_and_start_dependencies(service):
+                self.log(f"❌ Не удалось запустить зависимости для {service_name}", "error")
+                return False
+
+            # После запуска зависимостей снова проверяем целевой сервис
+            if self.is_service_running(service_name):
+                self.log(f"Сервис {service_name} был запущен через зависимости")
+                return True
+
+        # Запускаем сам сервис
+        return self._start_single_service(service)
 
     def stop_service(self, service):
         """Остановка сервиса."""
@@ -644,18 +739,16 @@ class UniversalServiceLauncher:
 
         root_services = [s for s in services if s.get("name") not in all_deps]
 
-        self.log(f"Корневые сервисы: {[s.get('name') for s in root_services]}")
+        self.log(f"🌳 Корневые сервисы: {[s.get('name') for s in root_services]}")
 
-        # Запускаем корневые первыми
+        # Запускаем корневые сервисы (они запустят свои зависимости, но их нет)
         for service in root_services:
             self.start_service(service, check_dependencies=False)
 
-        time.sleep(3)
-
-        # Затем все остальные (они подтянут свои зависимости через check_and_start_dependencies)
+        # Запускаем остальные сервисы (они сами подтянут зависимости)
         for service in services:
             if service not in root_services:
-                self.start_service(service)
+                self.start_service(service, check_dependencies=True)
 
     def restart_all(self):
         """Перезапуск всех сервисов."""

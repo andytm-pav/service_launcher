@@ -1,0 +1,20 @@
+Добавьте .idea в .gitignore (если ещё не добавили):
+
+text
+.idea/
+Удалите .idea из Git (чтобы они перестали отслеживаться):
+
+bash
+git rm -r --cached .idea
+git commit -m "Remove .idea from repository"
+Затем сделайте push:
+
+bash
+git push
+
+git status
+Должно показать что-то вроде:
+
+text
+Your branch is ahead of 'origin/master' by 1 commit.
+  (use "git push" to publish your local commits)
