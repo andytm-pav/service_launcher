@@ -1,0 +1,49 @@
+{
+  "name": "Test001",
+  "root_dir": "C:\\Projects\\Python\\FlowForge\\service_launcher",
+  "description": ";lkh;kl;'kl'k\n;kldssd",
+  "services": [
+    {
+      "name": "Orchestrator",
+      "script": "C:/Projects/Python/FlowForge/FlowForge/services/orchestrator/app/main.py",
+      "python_path": "C:/Projects/Python/FlowForge/FlowForge/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8001,
+      "env_file": "C:/Projects/Python/FlowForge/FlowForge/.env",
+      "order": 1,
+      "dependencies": []
+    },
+    {
+      "name": "API Gateway",
+      "script": "C:/Projects/Python/FlowForge/FlowForge/services/api-gateway/app/main.py",
+      "python_path": "C:/Projects/Python/FlowForge/FlowForge/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8000,
+      "env_file": "C:/Projects/Python/FlowForge/FlowForge/.env",
+      "order": 2,
+      "dependencies": [
+        "Orchestrator"
+      ]
+    },
+    {
+      "name": "test manager",
+      "script": "C:/Projects/Python/FlowForge/TestManager/managers/test-processor/main.py",
+      "python_path": "C:/Projects/Python/FlowForge/TestManager/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8800,
+      "env_file": "C:/Projects/Python/FlowForge/TestManager/managers/test-processor/.env",
+      "order": 3,
+      "dependencies": [
+        "API Gateway",
+        "Orchestrator"
+      ]
+    }
+  ],
+  "settings": {
+    "restart_delay": 3,
+    "port_check_timeout": 10,
+    "auto_start_dependencies": true
+  },
+  "created": "2026-03-22T22:14:33.016178",
+  "modified": "2026-03-22T23:07:09.508101"
+}
