@@ -15,28 +15,30 @@ import json
 import psutil
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+# from typing import Dict, List, Optional, Any
 import requests
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QTextEdit, QTreeWidget, QTreeWidgetItem,
+    QPushButton, QLabel, QComboBox, QTreeWidget, QTreeWidgetItem,
     QDialog, QDialogButtonBox, QMessageBox, QFileDialog, QInputDialog,
-    QLineEdit, QSpinBox, QCheckBox, QSplitter, QFrame, QHeaderView,
-    QListWidget, QListWidgetItem, QMenuBar, QMenu, QTabWidget, QGroupBox,
-    QFormLayout, QPlainTextEdit
+    QLineEdit, QSpinBox, QCheckBox, QSplitter, QHeaderView,
+    QListWidget, QListWidgetItem, QFormLayout, QPlainTextEdit,
+    QMenuBar, QMenu, QTabWidget, QGroupBox, QTextEdit, QFrame
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QThread, Signal, QObject, QSettings, QSize
+    Qt, QTimer, QThread, Signal, QEvent,
+    # QObject, QSettings, QSize, Q_ARG, QMetaObject, Slot
 )
 from PySide6.QtGui import (
-    QAction, QFont, QColor, QPalette, QIcon
+    QAction, QFont, QColor,
+    # QPalette, QIcon
 )
 
 
 # Configuration
 APP_NAME = "Universal Service Launcher"
-APP_VERSION = "2.0.0"
+APP_VERSION = "0.1.0"
 CONFIG_DIR = Path.home() / ".service_launcher"
 PROJECTS_DIR = CONFIG_DIR / "projects"
 SERVICES_DIR = CONFIG_DIR / "services"
@@ -63,9 +65,14 @@ COLORS = {
 }
 
 
-class LogHandler(QObject):
-    """Handles logging signals"""
-    log_signal = Signal(str, str)  # message, level
+class LogEvent(QEvent):
+    """Custom event for logging from threads"""
+    EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
+    
+    def __init__(self, message, level="info"):
+        super().__init__(LogEvent.EVENT_TYPE)
+        self.message = message
+        self.level = level
 
 
 class ServiceWorker(QThread):
@@ -146,7 +153,6 @@ class ServiceWorker(QThread):
                 startupinfo.wShowWindow = subprocess.SW_HIDE
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
 
-            self.log_signal.emit(f"🚀 Запуск {service_name}...", "info")
             self.process = subprocess.Popen(
                 [python_exe, str(script_path)],
                 cwd=str(working_dir),
@@ -156,8 +162,8 @@ class ServiceWorker(QThread):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                encoding='utf-8',  # Явно указываем кодировку
-                errors='replace'   # Заменяем проблемные символы
+                encoding='utf-8',
+                errors='replace'
             )
 
             self.process_started.emit(service_name, self.process.pid)
@@ -177,7 +183,7 @@ class ServiceWorker(QThread):
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 cmdline = ' '.join(proc.info['cmdline'] if proc.info['cmdline'] else [])
-                if service_name in cmdline or str(proc.pid) == str(self.process.pid if self.process else ''):
+                if service_name in cmdline or (self.process and str(proc.pid) == str(self.process.pid)):
                     proc.terminate()
                     try:
                         proc.wait(timeout=5)
@@ -259,7 +265,11 @@ class ServiceWorker(QThread):
         """Stop the worker"""
         self._is_running = False
         if self.process:
-            self.process.terminate()
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=2)
+            except:
+                pass
 
 
 class ServiceDialog(QDialog):
@@ -453,7 +463,7 @@ class ServiceDialog(QDialog):
             "port": int(self.port_edit.text()) if self.port_edit.text().isdigit() else None,
             "health_path": self.health_path_edit.text(),
             "env_file": self.env_edit.text(),
-            "working_dir": self.working_dir_edit.text(),  # Добавлено
+            "working_dir": self.working_dir_edit.text(),
             "order": self.order_spin.value(),
             "dependencies": [item.text() for item in self.deps_list.selectedItems()]
         }
@@ -515,15 +525,18 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.processes = {}  # pid -> service_name
         self.process_info = {}  # pid -> service_name
-        self.process_lock = threading.Lock()
+        self.process_lock = threading.RLock()  # Используем RLock для реентерабельности
+        self.stopped_service_pids = []  # Сохраняем PID остановленных сервисов
         self.running = True
         self.current_project = None
         self.project_data = None
         self.services_widgets = {}  # service_name -> tree item
         self.workers = {}  # service_name -> worker thread
         self.starting_services = set()  # Множество сервисов в процессе запуска
+        self.monitor_thread = None  # Сохраняем ссылку на поток мониторинга
+        self.monitor_stop_event = threading.Event()  # Событие для остановки мониторинга
+        self._is_closing = False  # Флаг закрытия
 
         self.setup_directories()
         self.setup_ui()
@@ -883,8 +896,32 @@ class MainWindow(QMainWindow):
             self.project_data["modified"] = datetime.now().isoformat()
             self.save_project()
 
+    def customEvent(self, event):
+        """Handle custom events (for logging from threads)"""
+        if isinstance(event, LogEvent):
+            try:
+                self._log(event.message, event.level)
+            except Exception as e:
+                print(f"Error in customEvent: {e}")
+        else:
+            super().customEvent(event)
+
     def log(self, message, level="info"):
-        """Add message to log"""
+        """Add message to log (thread-safe via event)"""
+        if self._is_closing:
+            return
+        
+        try:
+            event = LogEvent(message, level)
+            QApplication.postEvent(self, event)
+        except Exception as e:
+            print(f"{message}")
+
+    def _log(self, message, level="info"):
+        """Internal log method"""
+        if self._is_closing:
+            return
+            
         timestamp = datetime.now().strftime("%H:%M:%S")
 
         # Color coding based on level
@@ -897,47 +934,63 @@ class MainWindow(QMainWindow):
         else:
             log_entry = f"[{timestamp}] ℹ️ {message}"
 
-        self.log_text.appendPlainText(log_entry)
-        print(log_entry)
+        try:
+            self.log_text.appendPlainText(log_entry)
+            print(log_entry)
+        except Exception as e:
+            print(f"Error writing log: {e}")
 
     def refresh_display(self):
         """Refresh the services display"""
-        self.services_tree.clear()
-        self.services_widgets.clear()
-
-        if not self.project_data:
-            # Show message that no project is loaded
-            item = QTreeWidgetItem(self.services_tree)
-            item.setText(0, "ℹ️")
-            item.setText(1, "Нет загруженного проекта")
-            item.setTextAlignment(1, Qt.AlignCenter)
-            for i in range(2, 7):
-                item.setText(i, "")
+        if self._is_closing:
             return
-
-        services = self.project_data.get("services", [])
-        if not services:
-            # Show message that no services exist
-            item = QTreeWidgetItem(self.services_tree)
-            item.setText(0, "ℹ️")
-            item.setText(1, "Нет сервисов в проекте. Нажмите 'Добавить сервис'")
-            item.setTextAlignment(1, Qt.AlignCenter)
-            for i in range(2, 7):
-                item.setText(i, "")
+        QTimer.singleShot(0, self._do_refresh_display)
+    
+    def _do_refresh_display(self):
+        """Actual refresh display method"""
+        if self._is_closing:
             return
+            
+        try:
+            self.services_tree.clear()
+            self.services_widgets.clear()
 
-        # Sort by order
-        services.sort(key=lambda x: x.get("order", 999))
+            if not self.project_data:
+                item = QTreeWidgetItem(self.services_tree)
+                item.setText(0, "ℹ️")
+                item.setText(1, "Нет загруженного проекта")
+                item.setTextAlignment(1, Qt.AlignCenter)
+                for i in range(2, 7):
+                    item.setText(i, "")
+                return
 
-        # Add each service
-        for service in services:
-            self.add_service_to_tree(service)
+            services = self.project_data.get("services", [])
+            if not services:
+                item = QTreeWidgetItem(self.services_tree)
+                item.setText(0, "ℹ️")
+                item.setText(1, "Нет сервисов в проекте. Нажмите 'Добавить сервис'")
+                item.setTextAlignment(1, Qt.AlignCenter)
+                for i in range(2, 7):
+                    item.setText(i, "")
+                return
 
-        # Show headers
-        self.services_tree.header().show()
+            # Sort by order
+            services.sort(key=lambda x: x.get("order", 999))
+
+            # Add each service
+            for service in services:
+                self.add_service_to_tree(service)
+
+            # Show headers
+            self.services_tree.header().show()
+        except Exception as e:
+            print(f"Error in refresh_display: {e}")
 
     def add_service_to_tree(self, service):
         """Add a service to the tree widget"""
+        if self._is_closing:
+            return
+            
         service_name = service.get("name", "Unknown")
 
         # Check if service is running
@@ -959,7 +1012,7 @@ class MainWindow(QMainWindow):
         item.setText(2, str(port))
         item.setTextAlignment(2, Qt.AlignCenter)
 
-        # PID
+        # PID - безопасно получаем PID
         pid = "-"
         with self.process_lock:
             for proc_pid, proc_name in self.process_info.items():
@@ -991,25 +1044,36 @@ class MainWindow(QMainWindow):
         actions_layout.setContentsMargins(4, 2, 4, 2)
         actions_layout.setSpacing(4)
 
-        start_btn = QPushButton("▶")
+        # start_btn = QPushButton("▶")
+        start_btn = QPushButton("▶️")
+        # start_btn = QPushButton("▶")
+        # start_btn.setStyleSheet("color: #2ecc71; font-size: 18px;")  # Зеленый
+        # start_btn = QPushButton("🚀")
+        # start_btn.setStyleSheet("font-size: 14px;")
         start_btn.setFixedSize(32, 28)
         start_btn.setToolTip("Запустить")
         start_btn.clicked.connect(lambda checked, s=service: self.start_service(s))
         actions_layout.addWidget(start_btn)
 
-        stop_btn = QPushButton("■")
+        # stop_btn = QPushButton("■")
+        stop_btn = QPushButton("⏹️")
+        # stop_btn.setStyleSheet("color: #e74c3c; font-size: 12px;")  # Красный
         stop_btn.setFixedSize(32, 28)
         stop_btn.setToolTip("Остановить")
         stop_btn.clicked.connect(lambda checked, s=service: self.stop_service(s))
         actions_layout.addWidget(stop_btn)
 
-        restart_btn = QPushButton("↻")
+        # restart_btn = QPushButton("↻")
+        restart_btn = QPushButton("🔄")
+        # restart_btn.setStyleSheet("color: #f39c12; font-size: 16px; font-weight: bold;") # Оранжевый
         restart_btn.setFixedSize(32, 28)
         restart_btn.setToolTip("Перезапустить")
         restart_btn.clicked.connect(lambda checked, s=service: self.restart_service(s))
         actions_layout.addWidget(restart_btn)
 
-        edit_btn = QPushButton("✎")
+        # edit_btn = QPushButton("✎")
+        edit_btn = QPushButton("⚙️")
+        # edit_btn.setStyleSheet("color: #3498db; font-size: 12px;")  # Синий
         edit_btn.setFixedSize(32, 28)
         edit_btn.setToolTip("Редактировать")
         edit_btn.clicked.connect(lambda checked, s=service: self.edit_service_dialog(s))
@@ -1027,22 +1091,58 @@ class MainWindow(QMainWindow):
         """Start monitoring processes"""
 
         def monitor():
-            while self.running:
-                time.sleep(1)
-                with self.process_lock:
-                    for pid in list(self.process_info.keys()):
+            while not self.monitor_stop_event.is_set():
+                self.monitor_stop_event.wait(1)
+                
+                if self.monitor_stop_event.is_set() or self._is_closing:
+                    break
+                
+                dead_processes = []
+                
+                # Безопасно копируем словарь
+                try:
+                    with self.process_lock:
+                        if not self.process_info:
+                            continue
+                        processes = list(self.process_info.items())
+                except:
+                    continue
+                
+                # Проверяем процессы
+                for pid, service_name in processes:
+                    try:
                         if not psutil.pid_exists(pid):
-                            service_name = self.process_info[pid]
-                            self.log(f"💀 Процесс {service_name} (PID: {pid}) завершился")
-                            del self.process_info[pid]
-                            # Update display
-                            QTimer.singleShot(0, self.refresh_display)
+                            dead_processes.append((service_name, pid))
+                        else:
+                            proc = psutil.Process(pid)
+                            if proc.status() == psutil.STATUS_ZOMBIE:
+                                dead_processes.append((service_name, pid))
+                    except:
+                        dead_processes.append((service_name, pid))
+                
+                # Удаляем мертвые процессы
+                if dead_processes:
+                    with self.process_lock:
+                        for service_name, pid in dead_processes:
+                            if pid in self.process_info:
+                                del self.process_info[pid]
+                    
+                    # Логируем только если не закрываемся
+                    if not self._is_closing:
+                        for service_name, pid in dead_processes:
+                            self.log(f"💀 Процесс {service_name} (PID: {pid}) завершился", "warning")
+                        
+                        # Обновляем UI
+                        QTimer.singleShot(0, self.refresh_display)
 
-        thread = threading.Thread(target=monitor, daemon=True)
-        thread.start()
+        self.monitor_stop_event.clear()
+        self.monitor_thread = threading.Thread(target=monitor, daemon=True)  # daemon=True для автоматического завершения
+        self.monitor_thread.start()
 
     def find_service_by_name(self, service_name):
         """Find service by name"""
+        if not self.project_data:
+            return None
         for s in self.project_data.get("services", []):
             if s.get("name") == service_name:
                 return s
@@ -1147,16 +1247,25 @@ class MainWindow(QMainWindow):
         port = service.get("port")
         health_path = service.get("health_path", "/health")  # Можно задать свой путь в конфигурации
 
-        self.log(f"⏳ Ожидание готовности {service_name} (таймаут {timeout} сек)...")
+        # self.log(f"⏳ Ожидание готовности {service_name} (таймаут {timeout} сек)...")
+        self.log(f"⏳ Ожидание готовности {service_name} ...")
+
+        # Сначала ждем регистрации процесса
+        wait_start = time.time()
+        while time.time() - wait_start < 5:
+            if self.is_service_running(service_name):
+                break
+            QApplication.processEvents()
+            time.sleep(0.1)
+
+        if not self.is_service_running(service_name):
+            self.log(f"⚠️ Сервис {service_name} не зарегистрирован в системе")
+            return False
 
         while time.time() - start < timeout:
             # Проверяем, запущен ли процесс
 
-            # if not self.is_service_running(service_name): # TODO: add running service
-            #     time.sleep(0.5)
-            #     continue
-
-            if has_port and port:
+            if has_port and port:  # TODO: redefine?
                 try:
                     # Проверяем health endpoint
                     url = f"http://{host}:{port}{health_path}"
@@ -1165,7 +1274,6 @@ class MainWindow(QMainWindow):
                     if response.status_code == 200:
                         try:
                             data = response.json()
-                            self.log(data)
                             status = data.get("status", "").lower()
                             if status in ["ok", "healthy", "up"]:
                                 elapsed = int(time.time() - start)
@@ -1177,14 +1285,7 @@ class MainWindow(QMainWindow):
                                 elapsed = int(time.time() - start)
                                 self.log(f"✅ Сервис {service_name} готов (health check OK, через {elapsed} сек)")
                                 return True
-                except requests.exceptions.ConnectionError:
-                    # Порт еще не открыт или сервис не отвечает
-                    pass
-                except requests.exceptions.Timeout:
-                    # Таймаут запроса
-                    pass
-                except Exception as e:
-                    # Другие ошибки
+                except:
                     pass
             else:
                 # Если порта нет - просто ждем 3 секунды для инициализации
@@ -1199,16 +1300,20 @@ class MainWindow(QMainWindow):
 
     def start_single_service(self, service):
         """Start a single service"""
+        if self._is_closing:
+            return False
+            
         service_name = service.get("name")
 
         # Check if already running or starting
-        if self.is_service_running(service_name):
-            self.log(f"Сервис {service_name} уже запущен")
-            return True
+        with self.process_lock:
+            if self.is_service_running(service_name):
+                self.log(f"Сервис {service_name} уже запущен")
+                return True
 
-        if service_name in self.starting_services:
-            self.log(f"Сервис {service_name} уже запускается")
-            return True
+            if service_name in self.starting_services:
+                self.log(f"Сервис {service_name} уже запускается")
+                return True
 
         # Check port availability before starting
         if service.get("port"):
@@ -1224,7 +1329,8 @@ class MainWindow(QMainWindow):
                     return False
 
         # Отмечаем сервис как запускающийся
-        self.starting_services.add(service_name)
+        with self.process_lock:
+            self.starting_services.add(service_name)
 
         try:
             # Create and start worker thread
@@ -1234,7 +1340,8 @@ class MainWindow(QMainWindow):
             worker.process_started.connect(self.on_process_started)
             worker.process_stopped.connect(self.on_process_stopped)
 
-            self.workers[service_name] = worker
+            with self.process_lock:
+                self.workers[service_name] = worker
             worker.start()
 
             # Ждем, пока процесс появится в process_info (максимум 5 секунд)
@@ -1251,11 +1358,15 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self.log(f"❌ Ошибка запуска {service_name}: {e}", "error")
-            self.starting_services.discard(service_name)
+            with self.process_lock:
+                self.starting_services.discard(service_name)
             return False
 
     def start_service(self, service):
         """Запуск сервиса с проверкой всех зависимостей"""
+        if self._is_closing:
+            return False
+            
         service_name = service.get("name")
 
         # Проверяем не запущен ли уже
@@ -1268,7 +1379,7 @@ class MainWindow(QMainWindow):
             return True
 
         # Проверяем и запускаем все зависимости
-        if self.project_data.get("settings", {}).get("auto_start_dependencies", True):
+        if self.project_data and self.project_data.get("settings", {}).get("auto_start_dependencies", True):
             self.log(f"🔍 Проверка зависимостей для {service_name}")
 
             # Запускаем все зависимости сверху вниз
@@ -1286,30 +1397,124 @@ class MainWindow(QMainWindow):
 
     def stop_service(self, service):
         """Stop a service"""
+        if self._is_closing:
+            return
+
         service_name = service.get("name")
+        # print(f"[DEBUG] stop_service вызван для {service_name}")
 
-        # Stop the worker if running
-        if service_name in self.workers:
-            self.workers[service_name].stop()
-            del self.workers[service_name]
-
-        # Find and kill the process
+        # Останавливаем worker
+        worker = None
         with self.process_lock:
-            for pid, name in list(self.process_info.items()):
-                if name == service_name:
-                    try:
-                        proc = psutil.Process(pid)
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=5)
-                        except psutil.TimeoutExpired:
-                            proc.kill()
-                        self.log(f"🛑 Остановлен {service_name} (PID: {pid})")
-                        del self.process_info[pid]
-                    except psutil.NoSuchProcess:
-                        del self.process_info[pid]
+            worker = self.workers.pop(service_name, None)
 
-        self.refresh_display()
+        if worker:
+            # print(f"[DEBUG] Найден worker для {service_name}")
+            try:
+                try:
+                    worker.log_signal.disconnect()
+                    worker.process_started.disconnect()
+                    worker.process_stopped.disconnect()
+                except:
+                    pass
+
+                worker.stop()
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait(500)
+                # print(f"[DEBUG] Worker для {service_name} остановлен")
+            except Exception as e:
+                print(f"Error stopping worker for {service_name}: {e}")
+
+        # Останавливаем процессы и ВСЕ ИХ ДОЧЕРНИЕ ПРОЦЕССЫ
+        pids_to_stop = []
+        with self.process_lock:
+            pids_to_stop = [pid for pid, name in self.process_info.items() if name == service_name]
+
+        # print(f"[DEBUG] Найдены PID для {service_name}: {pids_to_stop}")
+
+        for pid in pids_to_stop:
+            # print(f"[DEBUG] Обрабатываем PID {pid} для {service_name}")
+
+            # СОХРАНЯЕМ PID
+            with self.process_lock:
+                self.stopped_service_pids.append(pid)
+                # print(f"[DEBUG] PID {pid} добавлен в stopped_service_pids")
+
+            try:
+                if psutil.pid_exists(pid):
+                    # print(f"[DEBUG] PID {pid} существует")
+                    proc = psutil.Process(pid)
+
+                    # НАХОДИМ И ЗАВЕРШАЕМ ВСЕХ ДОЧЕРНИХ ПРОЦЕССОВ
+                    try:
+                        children = proc.children(recursive=True)
+                        if children:
+                            # print(f"[DEBUG] Найдены дочерние процессы для PID {pid}: {[c.pid for c in children]}")
+                            for child in children:
+                                try:
+                                    child.terminate()
+                                    # print(f"[DEBUG] terminate() для дочернего процесса {child.pid}")
+                                except Exception as e:
+                                    pass
+                                    # print(f"[DEBUG] Ошибка terminate для {child.pid}: {e}")
+                        else:
+                            pass
+                            # print(f"[DEBUG] Нет дочерних процессов для PID {pid}")
+                    except Exception as e:
+                        pass
+                        # print(f"[DEBUG] Ошибка при поиске дочерних процессов: {e}")
+
+                    # Завершаем родительский процесс
+                    # print(f"[DEBUG] Завершаем родительский процесс {pid}")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                        # print(f"[DEBUG] Процесс {pid} завершился gracefully")
+                        if not self._is_closing:
+                            self.log(f"🛑 Остановлен {service_name} (PID: {pid})")
+                    except psutil.TimeoutExpired:
+                        # print(f"[DEBUG] Таймаут, убиваем процесс {pid}")
+                        proc.kill()
+                        proc.wait(timeout=1)
+                        if not self._is_closing:
+                            self.log(f"🛑 Принудительно остановлен {service_name} (PID: {pid})")
+
+                    # Даем время дочерним процессам завершиться
+                    time.sleep(0.5)
+
+                    # Принудительно убиваем дочерние, если остались
+                    try:
+                        remaining_children = proc.children(recursive=True)
+                        for child in remaining_children:
+                            try:
+                                child.kill()
+                                # print(f"[DEBUG] kill() для дочернего процесса {child.pid}")
+                            except:
+                                pass
+                    except:
+                        pass
+
+                else:
+                    # print(f"[DEBUG] PID {pid} не существует")
+                    if not self._is_closing:
+                        self.log(f"💀 Процесс {service_name} (PID: {pid}) завершился", "warning")
+            except psutil.NoSuchProcess:
+                # print(f"[DEBUG] Process {pid} not found")
+                pass
+            except Exception as e:
+                pass
+                # print(f"[DEBUG] Error stopping {service_name} (PID: {pid}): {e}")
+            finally:
+                with self.process_lock:
+                    if pid in self.process_info:
+                        del self.process_info[pid]
+                        # print(f"[DEBUG] PID {pid} удален из process_info")
+
+        # print(f"[DEBUG] stop_service завершен для {service_name}")
+
+        if not self._is_closing:
+            self.refresh_display()
 
     def restart_service(self, service):
         """Restart a service"""
@@ -1319,7 +1524,7 @@ class MainWindow(QMainWindow):
 
     def start_all(self):
         """Start all services with dependency order"""
-        if not self.project_data:
+        if not self.project_data or self._is_closing:
             return
 
         services = self.project_data.get("services", [])
@@ -1345,13 +1550,19 @@ class MainWindow(QMainWindow):
 
     def stop_all(self):
         """Stop all services"""
-        with self.process_lock:
-            services_to_stop = list(self.process_info.values())
-
-        for service_name in services_to_stop:
-            service = self.find_service_by_name(service_name)
-            if service:
-                self.stop_service(service)
+        if self._is_closing:
+            return
+            
+        try:
+            with self.process_lock:
+                services_to_stop = list(self.process_info.values())
+            
+            for service_name in services_to_stop:
+                service = self.find_service_by_name(service_name)
+                if service:
+                    self.stop_service(service)
+        except Exception as e:
+            print(f"Error stopping all services: {e}")
 
     def restart_all(self):
         """Restart all services"""
@@ -1361,6 +1572,9 @@ class MainWindow(QMainWindow):
 
     def on_process_started(self, service_name, pid):
         """Handle process start"""
+        if self._is_closing:
+            return
+            
         with self.process_lock:
             self.process_info[pid] = service_name
         # Убираем из списка запускающихся
@@ -1370,11 +1584,21 @@ class MainWindow(QMainWindow):
 
     def on_process_stopped(self, service_name, pid):
         """Handle process stop"""
+        if self._is_closing:
+            return
+
+        # print(f"[DEBUG] on_process_stopped вызван для {service_name} (PID: {pid})")
+
+        # СОХРАНЯЕМ PID ДАЖЕ ПРИ СПОНТАННОМ ЗАВЕРШЕНИИ
         with self.process_lock:
+            if pid not in self.stopped_service_pids:
+                self.stopped_service_pids.append(pid)
+                # print(f"[DEBUG] PID {pid} добавлен в stopped_service_pids (из on_process_stopped)")
+
             if pid in self.process_info:
                 del self.process_info[pid]
-        # Убираем из списка запускающихся
-        self.starting_services.discard(service_name)
+            self.starting_services.discard(service_name)
+
         self.log(f"🛑 {service_name} остановлен (PID: {pid})")
         QTimer.singleShot(0, self.refresh_display)
 
@@ -1563,7 +1787,7 @@ class MainWindow(QMainWindow):
 
 Универсальный инструмент для управления микросервисами
 
-Автор: Команда №4
+Автор: ...
 Лицензия: MIT
 
 Директория конфигурации:
@@ -1639,14 +1863,151 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle application close"""
+        # Защита от повторного вызова
+        if hasattr(self, '_closing_started') and self._closing_started:
+            print("closeEvent уже выполняется, игнорируем")
+            event.ignore()
+            return
+
+        self._closing_started = True
+        self._is_closing = True
         self.running = False
-        self.stop_all()
 
-        # Stop all workers
-        for worker in self.workers.values():
-            worker.stop()
+        print("Завершение работы программы...")
 
+        import psutil
+        import time
+
+        # Используем сохраненные PID сервисов
+        service_pids = list(self.stopped_service_pids)  # Копируем
+        print(f"Сохраненные PID сервисов из stopped_service_pids: {service_pids}")
+
+        # ДОБАВЛЯЕМ: ищем все процессы с multiprocessing.spawn в командной строке
+        print("Ищем multiprocessing процессы...")
+        multiprocessing_pids = []
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'ppid']):
+            try:
+                cmdline = ' '.join(proc.info['cmdline'] if proc.info['cmdline'] else [])
+                if 'multiprocessing.spawn' in cmdline:
+                    multiprocessing_pids.append(proc.info['pid'])
+                    print(f"Найден multiprocessing процесс: PID={proc.info['pid']}, PPID={proc.info['ppid']}")
+            except:
+                continue
+
+        print(f"Найдено multiprocessing процессов: {multiprocessing_pids}")
+
+        # Сначала останавливаем мониторинг
+        self.monitor_stop_event.set()
+
+        # Останавливаем все сервисы (если еще не остановлены)
+        try:
+            with self.process_lock:
+                service_names = list(self.process_info.values())
+
+            for service_name in service_names:
+                service = self.find_service_by_name(service_name)
+                if service:
+                    self.stop_service(service)
+        except Exception as e:
+            print(f"Error stopping services: {e}")
+
+        # Останавливаем все worker-ы
+        workers_to_stop = []
+        with self.process_lock:
+            workers_to_stop = list(self.workers.items())
+
+        for service_name, worker in workers_to_stop:
+            try:
+                try:
+                    worker.log_signal.disconnect()
+                    worker.process_started.disconnect()
+                    worker.process_stopped.disconnect()
+                except:
+                    pass
+
+                if worker and worker.isRunning():
+                    worker.stop()
+                    worker.quit()
+                    worker.wait(500)
+            except Exception as e:
+                print(f"Error stopping worker {service_name}: {e}")
+
+        # Очищаем словари
+        with self.process_lock:
+            self.process_info.clear()
+            self.starting_services.clear()
+            self.workers.clear()
+
+        # Получаем текущий PID
+        current_pid = os.getpid()
+        print(f"Текущий PID: {current_pid}")
+
+        # Добавляем все найденные multiprocessing PID к списку для убийства
+        all_pids_to_kill = set(multiprocessing_pids)
+
+        # Также ищем процессы, у которых родительский PID в сохраненных PID сервисов
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'ppid']):
+            try:
+                # Если родительский PID в нашем списке
+                if proc.info['ppid'] in service_pids:
+                    print(
+                        f"Найден процесс-потомок: PID={proc.info['pid']}, NAME={proc.info['name']}, PPID={proc.info['ppid']}")
+                    if proc.info['name'].lower() != 'conhost.exe':
+                        all_pids_to_kill.add(proc.info['pid'])
+            except:
+                continue
+
+        print(f"Всего процессов для завершения: {list(all_pids_to_kill)}")
+
+        # Завершаем все найденные процессы
+        for pid in all_pids_to_kill:
+            try:
+                proc = psutil.Process(pid)
+                print(f"Завершаем процесс {pid}")
+                proc.terminate()
+            except:
+                pass
+
+        # Ждем завершения
+        if all_pids_to_kill:
+            time.sleep(2)
+
+            # Убиваем те, которые не завершились
+            for pid in all_pids_to_kill:
+                try:
+                    proc = psutil.Process(pid)
+                    if proc.is_running():
+                        print(f"Принудительно убиваем процесс {pid}")
+                        proc.kill()
+                except:
+                    pass
+
+        # Также завершаем conhost процессы
+        for proc in psutil.process_iter(['pid', 'name', 'ppid']):
+            try:
+                if proc.info['ppid'] == current_pid and 'conhost' in proc.info['name'].lower():
+                    print(f"Найден conhost процесс: PID={proc.info['pid']}")
+                    proc.terminate()
+            except:
+                pass
+
+        print("Все процессы завершены")
+
+        # Даем время на завершение
+        time.sleep(0.5)
+
+        # Принудительно завершаем поток мониторинга
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=1)
+
+        # Принимаем событие закрытия
         event.accept()
+
+        # Принудительно завершаем приложение
+        QApplication.quit()
+
+        # Принудительный выход без финализации
+        os._exit(0)
 
 
 def main():
@@ -1655,13 +2016,16 @@ def main():
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("ServiceLauncher")
 
-    # Set application style
     app.setStyle('Fusion')
 
     window = MainWindow()
     window.show()
 
-    sys.exit(app.exec())
+    try:
+        sys.exit(app.exec())
+    except SystemExit:
+        # Принудительный выход, если что-то пошло не так
+        os._exit(0)
 
 
 if __name__ == "__main__":
