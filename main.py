@@ -38,7 +38,7 @@ from PySide6.QtGui import (
 
 # Configuration
 APP_NAME = "Universal Service Launcher"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 CONFIG_DIR = Path.home() / ".service_launcher"
 PROJECTS_DIR = CONFIG_DIR / "projects"
 SERVICES_DIR = CONFIG_DIR / "services"
@@ -554,7 +554,7 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         """Setup the main UI"""
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(1000, 700)
+        self.setMinimumSize(1200, 700)
 
         # Central widget
         central_widget = QWidget()
@@ -661,13 +661,13 @@ class MainWindow(QMainWindow):
         self.project_combo.currentTextChanged.connect(self.on_project_select)
         layout.addWidget(self.project_combo)
 
-        load_btn = QPushButton("Загрузить")
-        load_btn.clicked.connect(self.load_selected_project)
-        layout.addWidget(load_btn)
-
-        refresh_btn = QPushButton("Обновить")
-        refresh_btn.clicked.connect(self.refresh_display)
-        layout.addWidget(refresh_btn)
+        # load_btn = QPushButton("Загрузить")
+        # load_btn.clicked.connect(self.load_selected_project)
+        # layout.addWidget(load_btn)
+        #
+        # refresh_btn = QPushButton("Обновить")
+        # refresh_btn.clicked.connect(self.refresh_display)
+        # layout.addWidget(refresh_btn)
 
         layout.addStretch()
 
@@ -684,9 +684,9 @@ class MainWindow(QMainWindow):
         restart_all_btn.clicked.connect(self.restart_all)
         layout.addWidget(restart_all_btn)
 
-        add_service_btn = QPushButton("Добавить сервис")
-        add_service_btn.clicked.connect(self.add_service)
-        layout.addWidget(add_service_btn)
+        # add_service_btn = QPushButton("Добавить сервис")
+        # add_service_btn.clicked.connect(self.add_service)
+        # layout.addWidget(add_service_btn)
 
         return toolbar_widget
 
@@ -999,7 +999,18 @@ class MainWindow(QMainWindow):
 
         # Create item with correct number of columns
         item = QTreeWidgetItem()
-        item.setText(0, "●" if is_running else "○")  # Status
+        font = QFont()
+        if is_running:
+            item.setText(0, "●")  # Status
+            # Создаем шрифт с нужным размером
+            font.setPointSize(20)  # Размер шрифта 12
+            # Или font.setPixelSize(16) для размера в пикселях
+        else:
+            item.setText(0, "○")  # Status
+            # Создаем шрифт с нужным размером
+            font.setPointSize(12)  # Размер шрифта 12
+            # Или font.setPixelSize(16) для размера в пикселях
+        item.setFont(0, font)  # Применяем шрифт к первой колонке
         item.setForeground(0, QColor(COLORS["running"] if is_running else COLORS["stopped"]))
         item.setTextAlignment(0, Qt.AlignCenter)
 
