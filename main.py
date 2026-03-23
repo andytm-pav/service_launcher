@@ -35,7 +35,7 @@ from PySide6.QtGui import (
 
 # Configuration
 APP_NAME = "Universal Service Launcher"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.2"
 CONFIG_DIR = Path.home() / ".service_launcher"
 PROJECTS_DIR = CONFIG_DIR / "projects"
 SERVICES_DIR = CONFIG_DIR / "services"
