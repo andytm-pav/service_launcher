@@ -1930,6 +1930,8 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
 
+        # self.log(f"✅ Завершение программы ...")
+
         self._closing_started = True
         self._is_closing = True
         self.running = False
@@ -2061,17 +2063,17 @@ class MainWindow(QMainWindow):
             pid_list = ''
             for proc in remaining:
                 try:
-                    print(f"    PID={proc.pid}, NAME={proc.name()}, CMD={proc.cmdline()[:100]}")
-                    pid_list += f"PID={proc.pid}, NAME={proc.name()}, CMD={proc.cmdline()[:100]}\n"
+                    print(f"    PID={proc.pid}\nNAME={proc.name()}\nCMD={proc.cmdline()[:100]}")
+                    pid_list += f"● PID={proc.pid}\n● NAME={proc.name()}\n● CMD={proc.cmdline()[:100]}\n\n"
                 except:
                     print(f"    PID={proc.pid}")
-                    pid_list += f"PID={proc.pid}, NAME={proc.name()}, CMD={proc.cmdline()[:100]}\n"
+                    pid_list += f"● PID={proc.pid}\n\n"
 
             # Спрашиваем пользователя
             reply = QMessageBox.question(
                 self,
                 "Незавершенные процессы",
-                f"Осталось {len(remaining)} незавершенных процессов.\n\n{pid_list}"
+                f"Осталось {len(remaining)} незавершенных процессов.\n\n{pid_list}\n"
                 f"Принудительно завершить их?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
