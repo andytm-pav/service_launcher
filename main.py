@@ -538,11 +538,32 @@ class MainWindow(QMainWindow):
         self.monitor_stop_event = threading.Event()  # Событие для остановки мониторинга
         self._is_closing = False  # Флаг закрытия
 
+        self.start_all_btn = QPushButton("Запустить все")
+        self.stop_all_btn = QPushButton("Остановить все")
+        self.restart_all_btn = QPushButton("Перезапустить все")
+        self.project_combo = QComboBox()
+
+        self.menubar = self.menuBar()
+
         self.setup_directories()
         self.setup_ui()
-        self.setup_menu()
+        self.setup_menu(self.menubar)
         self.load_projects_list()
         self.start_monitoring()
+
+    def lock_unlock(self, stage=1):
+        if stage == 1:
+            self.start_all_btn.setEnabled(True)
+            self.stop_all_btn.setEnabled(False)
+            self.restart_all_btn.setEnabled(False)
+            self.project_combo.setEnabled(True)
+            self.menubar.setEnabled(True)
+        elif stage == 2:
+            self.start_all_btn.setEnabled(False)
+            self.stop_all_btn.setEnabled(True)
+            self.restart_all_btn.setEnabled(True)
+            self.project_combo.setEnabled(False)
+            self.menubar.setEnabled(False)
 
     def setup_directories(self):
         """Create necessary directories"""
@@ -656,7 +677,6 @@ class MainWindow(QMainWindow):
 
         # Project selector
         layout.addWidget(QLabel("Проект:"))
-        self.project_combo = QComboBox()
         self.project_combo.setMinimumWidth(300)
         self.project_combo.currentTextChanged.connect(self.on_project_select)
         layout.addWidget(self.project_combo)
@@ -672,17 +692,14 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
         # Control buttons
-        start_all_btn = QPushButton("Запустить все")
-        start_all_btn.clicked.connect(self.start_all)
-        layout.addWidget(start_all_btn)
+        self.start_all_btn.clicked.connect(self.start_all)
+        layout.addWidget(self.start_all_btn)
 
-        stop_all_btn = QPushButton("Остановить все")
-        stop_all_btn.clicked.connect(self.stop_all)
-        layout.addWidget(stop_all_btn)
+        self.stop_all_btn.clicked.connect(self.stop_all)
+        layout.addWidget(self.stop_all_btn)
 
-        restart_all_btn = QPushButton("Перезапустить все")
-        restart_all_btn.clicked.connect(self.restart_all)
-        layout.addWidget(restart_all_btn)
+        self.restart_all_btn.clicked.connect(self.restart_all)
+        layout.addWidget(self.restart_all_btn)
 
         # add_service_btn = QPushButton("Добавить сервис")
         # add_service_btn.clicked.connect(self.add_service)
@@ -690,9 +707,8 @@ class MainWindow(QMainWindow):
 
         return toolbar_widget
 
-    def setup_menu(self):
+    def setup_menu(self, menubar):
         """Create the menu bar"""
-        menubar = self.menuBar()
 
         # File menu
         file_menu = menubar.addMenu("Файл")
@@ -782,6 +798,7 @@ class MainWindow(QMainWindow):
                     data = json.load(f)
                     name = data.get("name", file.stem)
                     self.project_combo.addItem(name, str(file))
+                    self.lock_unlock(1)
             except:
                 name = file.stem
                 self.project_combo.addItem(name, str(file))
@@ -1483,6 +1500,8 @@ class MainWindow(QMainWindow):
         if not self.project_data or self._is_closing:
             return
 
+        self.lock_unlock(2)
+
         services = self.project_data.get("services", [])
 
         # Find root services (no dependencies)
@@ -1517,6 +1536,7 @@ class MainWindow(QMainWindow):
                 service = self.find_service_by_name(service_name)
                 if service:
                     self.stop_service(service)
+                    self.lock_unlock(1)
         except Exception as e:
             print(f"Error stopping all services: {e}")
 
