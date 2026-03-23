@@ -1412,7 +1412,6 @@ class MainWindow(QMainWindow):
             return
 
         service_name = service.get("name")
-        # print(f"[DEBUG] stop_service вызван для {service_name}")
 
         # Останавливаем worker
         worker = None
@@ -1420,7 +1419,6 @@ class MainWindow(QMainWindow):
             worker = self.workers.pop(service_name, None)
 
         if worker:
-            # print(f"[DEBUG] Найден worker для {service_name}")
             try:
                 try:
                     worker.log_signal.disconnect()
@@ -1433,96 +1431,43 @@ class MainWindow(QMainWindow):
                 if worker.isRunning():
                     worker.quit()
                     worker.wait(500)
-                # print(f"[DEBUG] Worker для {service_name} остановлен")
             except Exception as e:
                 print(f"Error stopping worker for {service_name}: {e}")
 
-        # Останавливаем процессы и ВСЕ ИХ ДОЧЕРНИЕ ПРОЦЕССЫ
+        # Останавливаем процессы и СОХРАНЯЕМ PID
         pids_to_stop = []
         with self.process_lock:
             pids_to_stop = [pid for pid, name in self.process_info.items() if name == service_name]
 
-        # print(f"[DEBUG] Найдены PID для {service_name}: {pids_to_stop}")
-
         for pid in pids_to_stop:
-            # print(f"[DEBUG] Обрабатываем PID {pid} для {service_name}")
-
-            # СОХРАНЯЕМ PID
+            # СОХРАНЯЕМ PID ПЕРЕД УДАЛЕНИЕМ
             with self.process_lock:
                 self.stopped_service_pids.append(pid)
-                # print(f"[DEBUG] PID {pid} добавлен в stopped_service_pids")
 
             try:
                 if psutil.pid_exists(pid):
-                    # print(f"[DEBUG] PID {pid} существует")
                     proc = psutil.Process(pid)
-
-                    # НАХОДИМ И ЗАВЕРШАЕМ ВСЕХ ДОЧЕРНИХ ПРОЦЕССОВ
-                    try:
-                        children = proc.children(recursive=True)
-                        if children:
-                            # print(f"[DEBUG] Найдены дочерние процессы для PID {pid}: {[c.pid for c in children]}")
-                            for child in children:
-                                try:
-                                    child.terminate()
-                                    # print(f"[DEBUG] terminate() для дочернего процесса {child.pid}")
-                                except Exception as e:
-                                    pass
-                                    # print(f"[DEBUG] Ошибка terminate для {child.pid}: {e}")
-                        else:
-                            pass
-                            # print(f"[DEBUG] Нет дочерних процессов для PID {pid}")
-                    except Exception as e:
-                        pass
-                        # print(f"[DEBUG] Ошибка при поиске дочерних процессов: {e}")
-
-                    # Завершаем родительский процесс
-                    # print(f"[DEBUG] Завершаем родительский процесс {pid}")
                     proc.terminate()
                     try:
                         proc.wait(timeout=2)
-                        # print(f"[DEBUG] Процесс {pid} завершился gracefully")
                         if not self._is_closing:
                             self.log(f"🛑 Остановлен {service_name} (PID: {pid})")
                     except psutil.TimeoutExpired:
-                        # print(f"[DEBUG] Таймаут, убиваем процесс {pid}")
                         proc.kill()
                         proc.wait(timeout=1)
                         if not self._is_closing:
                             self.log(f"🛑 Принудительно остановлен {service_name} (PID: {pid})")
-
-                    # Даем время дочерним процессам завершиться
-                    time.sleep(0.5)
-
-                    # Принудительно убиваем дочерние, если остались
-                    try:
-                        remaining_children = proc.children(recursive=True)
-                        for child in remaining_children:
-                            try:
-                                child.kill()
-                                # print(f"[DEBUG] kill() для дочернего процесса {child.pid}")
-                            except:
-                                pass
-                    except:
-                        pass
-
                 else:
-                    # print(f"[DEBUG] PID {pid} не существует")
                     if not self._is_closing:
                         self.log(f"💀 Процесс {service_name} (PID: {pid}) завершился", "warning")
             except psutil.NoSuchProcess:
-                # print(f"[DEBUG] Process {pid} not found")
                 pass
             except Exception as e:
-                pass
-                # print(f"[DEBUG] Error stopping {service_name} (PID: {pid}): {e}")
+                print(f"Error stopping {service_name} (PID: {pid}): {e}")
             finally:
                 with self.process_lock:
                     if pid in self.process_info:
                         del self.process_info[pid]
-                        # print(f"[DEBUG] PID {pid} удален из process_info")
-
-        # print(f"[DEBUG] stop_service завершен для {service_name}")
 
         if not self._is_closing:
             self.refresh_display()
@@ -1893,20 +1838,6 @@ class MainWindow(QMainWindow):
         service_pids = list(self.stopped_service_pids)  # Копируем
         print(f"Сохраненные PID сервисов из stopped_service_pids: {service_pids}")
 
-        # ДОБАВЛЯЕМ: ищем все процессы с multiprocessing.spawn в командной строке
-        print("Ищем multiprocessing процессы...")
-        multiprocessing_pids = []
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'ppid']):
-            try:
-                cmdline = ' '.join(proc.info['cmdline'] if proc.info['cmdline'] else [])
-                if 'multiprocessing.spawn' in cmdline:
-                    multiprocessing_pids.append(proc.info['pid'])
-                    print(f"Найден multiprocessing процесс: PID={proc.info['pid']}, PPID={proc.info['ppid']}")
-            except:
-                continue
-
-        print(f"Найдено multiprocessing процессов: {multiprocessing_pids}")
-
         # Сначала останавливаем мониторинг
         self.monitor_stop_event.set()
 
@@ -1953,38 +1884,37 @@ class MainWindow(QMainWindow):
         current_pid = os.getpid()
         print(f"Текущий PID: {current_pid}")
 
-        # Добавляем все найденные multiprocessing PID к списку для убийства
-        all_pids_to_kill = set(multiprocessing_pids)
+        # Добавляем сохраненные PID сервисов к списку для проверки
+        all_pids_to_check = service_pids + [current_pid]
+        print(f"Проверяем процессы с родителями: {all_pids_to_check}")
 
-        # Также ищем процессы, у которых родительский PID в сохраненных PID сервисов
+        # Ищем процессы, у которых родительский PID в нашем списке
+        killed_pids = []
         for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'ppid']):
             try:
                 # Если родительский PID в нашем списке
-                if proc.info['ppid'] in service_pids:
-                    print(
-                        f"Найден процесс-потомок: PID={proc.info['pid']}, NAME={proc.info['name']}, PPID={proc.info['ppid']}")
-                    if proc.info['name'].lower() != 'conhost.exe':
-                        all_pids_to_kill.add(proc.info['pid'])
-            except:
+                if proc.info['ppid'] in all_pids_to_check:
+                    print(f"Найден процесс: PID={proc.info['pid']}, NAME={proc.info['name']}, PPID={proc.info['ppid']}")
+                    # Пропускаем conhost и текущий процесс
+                    if proc.info['name'].lower() == 'conhost.exe' or proc.info['pid'] == current_pid:
+                        print(f"  Пропускаем")
+                        continue
+                    try:
+                        proc.terminate()
+                        killed_pids.append(proc.info['pid'])
+                        print(f"  terminate() вызван для PID {proc.info['pid']}")
+                    except Exception as e:
+                        print(f"  Ошибка terminate: {e}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
-        print(f"Всего процессов для завершения: {list(all_pids_to_kill)}")
-
-        # Завершаем все найденные процессы
-        for pid in all_pids_to_kill:
-            try:
-                proc = psutil.Process(pid)
-                print(f"Завершаем процесс {pid}")
-                proc.terminate()
-            except:
-                pass
-
         # Ждем завершения
-        if all_pids_to_kill:
+        if killed_pids:
+            print(f"Ждем завершения процессов: {killed_pids}")
             time.sleep(2)
 
             # Убиваем те, которые не завершились
-            for pid in all_pids_to_kill:
+            for pid in killed_pids:
                 try:
                     proc = psutil.Process(pid)
                     if proc.is_running():
