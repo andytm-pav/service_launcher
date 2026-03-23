@@ -601,35 +601,11 @@ class MainApp(App):
 
         main_layout = BoxLayout(orientation='vertical')
 
-        # Toolbar
-        toolbar = BoxLayout(size_hint_y=0.08, spacing=dp(5), padding=dp(5))
-
-        toolbar.add_widget(Label(text="Проект:", size_hint_x=0.1))
-        self.project_spinner = Spinner(text="Выберите проект", values=[], size_hint_x=0.3)
-        self.project_spinner.bind(text=self.on_project_select)
-        toolbar.add_widget(self.project_spinner)
-
-        toolbar.add_widget(Label(size_hint_x=0.3))
-
-        self.start_all_btn = Button(text="Запустить все", size_hint_x=0.15)
-        self.start_all_btn.bind(on_press=self.start_all)
-        toolbar.add_widget(self.start_all_btn)
-
-        self.stop_all_btn = Button(text="Остановить все", size_hint_x=0.15)
-        self.stop_all_btn.bind(on_press=self.stop_all)
-        toolbar.add_widget(self.stop_all_btn)
-
-        self.restart_all_btn = Button(text="Перезапустить все", size_hint_x=0.15)
-        self.restart_all_btn.bind(on_press=self.restart_all)
-        toolbar.add_widget(self.restart_all_btn)
-
-        main_layout.add_widget(toolbar)
-
         # Menu bar
         menubar = BoxLayout(size_hint_y=0.06, spacing=dp(2))
 
         # File menu
-        file_btn = Button(text="Файл", size_hint_x=0.1)
+        file_btn = Button(text="Файл", size_hint_x=0.3)
         file_dropdown = DropDown()
         new_item = Button(text="Новый проект", size_hint_y=None, height=dp(40))
         new_item.bind(on_release=lambda btn: self.new_project())
@@ -653,7 +629,7 @@ class MainApp(App):
         menubar.add_widget(file_btn)
 
         # Services menu
-        services_btn = Button(text="Сервисы", size_hint_x=0.1)
+        services_btn = Button(text="Сервисы", size_hint_x=0.3)
         services_dropdown = DropDown()
         add_item = Button(text="Добавить сервис", size_hint_y=None, height=dp(40))
         add_item.bind(on_release=lambda btn: self.add_service())
@@ -668,7 +644,7 @@ class MainApp(App):
         menubar.add_widget(services_btn)
 
         # Settings menu
-        settings_btn = Button(text="Настройки", size_hint_x=0.1)
+        settings_btn = Button(text="Настройки", size_hint_x=0.3)
         settings_dropdown = DropDown()
         project_settings_item = Button(text="Настройки проекта", size_hint_y=None, height=dp(40))
         project_settings_item.bind(on_release=lambda btn: self.project_settings())
@@ -677,7 +653,7 @@ class MainApp(App):
         menubar.add_widget(settings_btn)
 
         # Help menu
-        help_btn = Button(text="Помощь", size_hint_x=0.1)
+        help_btn = Button(text="Помощь", size_hint_x=0.3)
         help_dropdown = DropDown()
         help_item = Button(text="Справка", size_hint_y=None, height=dp(40))
         help_item.bind(on_release=lambda btn: self.show_help())
@@ -690,6 +666,30 @@ class MainApp(App):
 
         menubar.add_widget(Label())
         main_layout.add_widget(menubar)
+
+        # Toolbar
+        toolbar = BoxLayout(size_hint_y=0.08, spacing=dp(5), padding=dp(5))
+
+        toolbar.add_widget(Label(text="Проект:", size_hint_x=0.1))
+        self.project_spinner = Spinner(text="Выберите проект", values=[], size_hint_x=0.3)
+        self.project_spinner.bind(text=self.on_project_select)
+        toolbar.add_widget(self.project_spinner)
+
+        toolbar.add_widget(Label(size_hint_x=0.3))
+
+        self.start_all_btn = Button(text="Запустить все", size_hint_x=0.15)
+        self.start_all_btn.bind(on_press=self.start_all)
+        toolbar.add_widget(self.start_all_btn)
+
+        self.stop_all_btn = Button(text="Остановить все", size_hint_x=0.15)
+        self.stop_all_btn.bind(on_press=self.stop_all)
+        toolbar.add_widget(self.stop_all_btn)
+
+        self.restart_all_btn = Button(text="Перезапустить все", size_hint_x=0.15)
+        self.restart_all_btn.bind(on_press=self.restart_all)
+        toolbar.add_widget(self.restart_all_btn)
+
+        main_layout.add_widget(toolbar)
 
         # Splitter
         splitter = BoxLayout(orientation='vertical', spacing=dp(5))
