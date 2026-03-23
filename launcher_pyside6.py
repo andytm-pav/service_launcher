@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+
+# pip install PyInstaller
+# pip install --upgrade PyInstaller pyinstaller-hooks-contrib
+
+# pyinstaller --windowed --onefile --name Service_launcher launcher_pyside6.py
+
 """
 Universal Service Launcher - PySide6 Version
 A powerful service manager for microservices and Python applications
