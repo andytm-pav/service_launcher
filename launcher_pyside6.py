@@ -19,6 +19,8 @@ import time
 import socket
 import json
 import signal
+from os import terminal_size
+
 import psutil
 from pathlib import Path
 from datetime import datetime
@@ -402,12 +404,33 @@ class ServiceDialog(QDialog):
 
         self.setLayout(layout)
 
+    # def browse_working_dir(self):
+    #     directory = QFileDialog.getExistingDirectory(
+    #         self,
+    #         "Выберите рабочую директорию",
+    #         str(self.root_dir)
+    #     )
+    #     if directory:
+    #         self.working_dir_edit.setText(directory)
+
     def browse_working_dir(self):
+        # Получаем текущую директорию из поля ввода
+        current_dir = self.working_dir_edit.text()
+
+        # Определяем начальную директорию
+        if current_dir and os.path.exists(current_dir) and os.path.isdir(current_dir):
+            # Если директория существует, используем её
+            start_dir = current_dir
+        else:
+            # Иначе используем root_dir
+            start_dir = str(self.root_dir)
+
         directory = QFileDialog.getExistingDirectory(
             self,
             "Выберите рабочую директорию",
-            str(self.root_dir)
+            start_dir
         )
+
         if directory:
             self.working_dir_edit.setText(directory)
 
@@ -427,33 +450,94 @@ class ServiceDialog(QDialog):
 
         return interpreters
 
+    # def browse_script(self):
+    #     filename, _ = QFileDialog.getOpenFileName(
+    #         self,
+    #         "Выберите скрипт",
+    #         str(self.root_dir),
+    #         "Python files (*.py);;All files (*.*)"
+    #     )
+    #     if filename:
+    #         self.script_edit.setText(filename)
+
     def browse_script(self):
+        # Получаем текущий путь из поля ввода
+        current_script = self.script_edit.text()
+
+        # Определяем начальную директорию
+        if current_script and os.path.exists(current_script):
+            # Если файл существует, используем его директорию
+            start_dir = os.path.dirname(current_script)
+        else:
+            # Иначе используем root_dir
+            start_dir = str(self.root_dir)
+
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Выберите скрипт",
-            str(self.root_dir),
+            start_dir,
             "Python files (*.py);;All files (*.*)"
         )
+
         if filename:
             self.script_edit.setText(filename)
 
+    # def browse_python(self):
+    #     filename, _ = QFileDialog.getOpenFileName(
+    #         self,
+    #         "Выберите Python интерпретатор",
+    #         str(self.root_dir),
+    #         "Python executable (python*);;All files (*.*)"
+    #     )
+    #     if filename:
+    #         self.python_combo.setCurrentText(filename)
+
     def browse_python(self):
+        # Получаем текущий путь из комбобокса
+        current_python = self.python_combo.currentText()
+
+        # Определяем начальную директорию
+        if current_python and current_python != "system":
+            # Проверяем, существует ли файл (если это не "system")
+            if os.path.exists(current_python):
+                # Если файл существует, используем его директорию
+                start_dir = os.path.dirname(current_python)
+            else:
+                # Если путь указан, но файл не существует, используем root_dir
+                start_dir = str(self.root_dir)
+        else:
+            # Если выбрано "system" или поле пустое, используем root_dir
+            start_dir = str(self.root_dir)
+
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Выберите Python интерпретатор",
-            str(self.root_dir),
+            start_dir,
             "Python executable (python*);;All files (*.*)"
         )
+
         if filename:
             self.python_combo.setCurrentText(filename)
 
     def browse_env(self):
+        # Получаем текущий путь из поля ввода
+        current_script = self.env_edit.text()
+
+        # Определяем начальную директорию
+        if current_script and os.path.exists(current_script):
+            # Если файл существует, используем его директорию
+            start_dir = os.path.dirname(current_script)
+        else:
+            # Иначе используем root_dir
+            start_dir = str(self.root_dir)
+
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Выберите .env файл",
-            str(self.root_dir),
+            str(start_dir),
             "Environment files (*.env);;All files (*.*)"
         )
+
         if filename:
             self.env_edit.setText(filename)
 
@@ -1549,15 +1633,15 @@ class MainWindow(QMainWindow):
             for dep in service.get("dependencies", []):
                 all_deps.add(dep)
 
-        root_services = [s for s in services if s.get("name") not in all_deps]
+        terminal_services = [s for s in services if s.get("name") not in all_deps]
 
-        self.log(f"🌳 Корневые сервисы: {[s.get('name') for s in root_services]}")
+        self.log(f"🍃 Терминальные сервисы: {[s.get('name') for s in terminal_services]}")
 
-        for service in root_services:
+        for service in terminal_services:
             self.start_service(service)
 
         for service in services:
-            if service not in root_services:
+            if service not in terminal_services:
                 self.start_service(service)
 
     def stop_all(self):
