@@ -1,0 +1,87 @@
+{
+  "name": "work",
+  "root_dir": "C:/Projects/Python/FlowForge/service_launcher",
+  "description": "работа с новой структурой",
+  "services": [
+    {
+      "name": "Orchestrator",
+      "script": "C:/Projects/Python/FlowForge/Orchestrator/services/orchestrator/app/main.py",
+      "python_path": "C:/Projects/Python/FlowForge/Orchestrator/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8001,
+      "health_path": "/health",
+      "env_file": "C:/Projects/Python/FlowForge/Orchestrator/services/orchestrator/.env",
+      "working_dir": "C:/Projects/Python/FlowForge/Orchestrator",
+      "order": 1,
+      "dependencies": []
+    },
+    {
+      "name": "API Gateway",
+      "script": "C:/Projects/Python/FlowForge/APIGateway/services/api-gateway/app/main.py",
+      "python_path": "C:/Projects/Python/FlowForge/APIGateway/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8000,
+      "health_path": "/health",
+      "env_file": "C:/Projects/Python/FlowForge/APIGateway/services/api-gateway/.env",
+      "working_dir": "C:/Projects/Python/FlowForge/APIGateway",
+      "order": 2,
+      "dependencies": [
+        "Orchestrator"
+      ]
+    },
+    {
+      "name": "Frontend Server",
+      "script": "C:/Projects/Python/FlowForge/FlowForgeFrontend/frontend/serve_static.py",
+      "python_path": "C:/Projects/Python/FlowForge/FlowForgeFrontend/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8080,
+      "health_path": "",
+      "env_file": "",
+      "working_dir": "C:/Projects/Python/FlowForge/FlowForgeFrontend",
+      "order": 3,
+      "dependencies": [
+        "Orchestrator",
+        "API Gateway"
+      ]
+    },
+    {
+      "name": "test manager",
+      "script": "C:/Projects/Python/FlowForge/TestManager/managers/test-processor/main.py",
+      "python_path": "C:/Projects/Python/FlowForge/TestManager/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8800,
+      "health_path": "/health",
+      "env_file": "C:/Projects/Python/FlowForge/TestManager/managers/test-processor/.env",
+      "working_dir": "C:/Projects/Python/FlowForge/TestManager/managers/test-processor",
+      "order": 4,
+      "dependencies": [
+        "Orchestrator",
+        "API Gateway"
+      ]
+    },
+    {
+      "name": "Parsing RSS manager",
+      "script": "C:/Projects/Python/FlowForge/ParsingRSSManager/managers/parsing-rss/main.py",
+      "python_path": "C:/Projects/Python/FlowForge/ParsingRSSManager/.venv/Scripts/python.exe",
+      "host": "127.0.0.1",
+      "port": 8801,
+      "health_path": "/health",
+      "env_file": "C:/Projects/Python/FlowForge/ParsingRSSManager/managers/parsing-rss/.env",
+      "working_dir": "C:/Projects/Python/FlowForge/ParsingRSSManager/managers/parsing-rss",
+      "order": 5,
+      "dependencies": [
+        "Orchestrator",
+        "API Gateway"
+      ]
+    }
+  ],
+  "settings": {
+    "restart_delay": 3,
+    "port_check_timeout": 10,
+    "auto_start_dependencies": true,
+    "graceful_shutdown_timeout": 30,
+    "log_level": "INFO"
+  },
+  "created": "2026-03-25T09:50:44.871246",
+  "modified": "2026-03-25T10:08:52.263641"
+}
