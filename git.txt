@@ -1,0 +1,9 @@
+# push an existing repository from the command line
+git init
+
+# create repository
+git remote add origin https://github.com/andytm-pav/service_launcher.git
+
+# в файле \service_launcher\.idea\.gitignore добавить * как последнюю строку - это исключит всю директорию из репозитория
+
+# push via pycharm
