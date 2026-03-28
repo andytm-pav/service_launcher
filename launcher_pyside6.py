@@ -7,7 +7,7 @@
 
 """
 Universal Service Launcher - PySide6 Version
-A powerful service manager for microservices and Python applications
+A powerful service processor for microservices and Python applications
 """
 
 import sys

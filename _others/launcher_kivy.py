@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Universal Service Launcher - Kivy Version
-A powerful service manager for microservices and Python applications
+A powerful service processor for microservices and Python applications
 """
 
 # pip install kivy psutil requests
@@ -325,7 +325,7 @@ class ServicesList(RecycleView):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.layout_manager = RecycleBoxLayout(
+        self.layout_processor = RecycleBoxLayout(
             default_size=(None, dp(50)),
             default_size_hint=(1, None),
             size_hint_y=None,
@@ -333,8 +333,8 @@ class ServicesList(RecycleView):
             orientation='vertical',
             spacing=dp(2)
         )
-        self.layout_manager.bind(minimum_height=self.layout_manager.setter('height'))
-        self.add_widget(self.layout_manager)
+        self.layout_processor.bind(minimum_height=self.layout_processor.setter('height'))
+        self.add_widget(self.layout_processor)
 
 
 class ServiceDialog(Popup):
