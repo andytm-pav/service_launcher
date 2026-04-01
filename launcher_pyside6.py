@@ -177,7 +177,7 @@ class ServiceWorker(QThread):
             self.monitor_process()
 
         except Exception as e:
-            self.log_signal.emit(f"❌ Ошибка запуска {service_name}: {e}", "error")
+            self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Ошибка запуска {service_name}: {e}", "error")
 
     def stop_service(self):
         """Stop a service gracefully"""
@@ -194,14 +194,14 @@ class ServiceWorker(QThread):
                     else:
                         proc.terminate()
 
-                    self.log_signal.emit(f"🛑 Отправлен сигнал завершения {service_name} (PID: {proc.pid})", "info")
+                    self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} 🛑 Отправлен сигнал завершения {service_name} (PID: {proc.pid})", "info")
 
                     # Ждем завершения
                     try:
                         proc.wait(timeout=10)
-                        self.log_signal.emit(f"✅ {service_name} корректно остановлен", "success")
+                        self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ {service_name} корректно остановлен", "success")
                     except psutil.TimeoutExpired:
-                        self.log_signal.emit(f"⚠️ {service_name} не остановился за 10 сек", "warning")
+                        self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⚠️ {service_name} не остановился за 10 сек", "warning")
 
                     self.process_stopped.emit(service_name, proc.pid)
                     break
@@ -254,7 +254,7 @@ class ServiceWorker(QThread):
                                 key, value = line.split('=', 1)
                                 env_vars[key.strip()] = value.strip()
             except Exception as e:
-                self.log_signal.emit(f"Ошибка загрузки {env_path}: {e}", "warning")
+                self.log_signal.emit(f"[Service Launcher]{' '*(GAP-18)} Ошибка загрузки {env_path}: {e}", "warning")
         return env_vars
 
     def monitor_process(self):
