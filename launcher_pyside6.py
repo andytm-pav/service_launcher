@@ -72,6 +72,8 @@ COLORS = {
     "info": "#4a9eff"
 }
 
+GAP = 26  # string gap for log messages
+
 
 class LogEvent(QEvent):
     """Custom event for logging from threads"""
@@ -116,7 +118,7 @@ class ServiceWorker(QThread):
             script_path = self.root_dir / script_path
 
         if not script_path.exists():
-            self.log_signal.emit(f"❌ Скрипт не найден: {script_path}", "error")
+            self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Скрипт не найден: {script_path}", "error")
             return
 
         try:
@@ -142,11 +144,11 @@ class ServiceWorker(QThread):
                 working_dir = script_path.parent
 
             if not working_dir.exists():
-                self.log_signal.emit(f"⚠️ Рабочая директория не существует: {working_dir}", "warning")
+                self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⚠️ Рабочая директория не существует: {working_dir}", "warning")
                 working_dir = self.root_dir
 
-            self.log_signal.emit(f"🚀 Запуск {service_name}...", "info")
-            self.log_signal.emit(f"📁 Рабочая директория: {working_dir}", "info")
+            self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} 🚀 Запуск {service_name}...", "info")
+            self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} 📁 Рабочая директория: {working_dir}", "info")
 
             # Windows-specific setup
             startupinfo = None
@@ -171,7 +173,7 @@ class ServiceWorker(QThread):
             )
 
             self.process_started.emit(service_name, self.process.pid)
-            self.log_signal.emit(f"✅ {service_name} запущен (PID: {self.process.pid})", "success")
+            # self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ {service_name} запущен (PID: {self.process.pid})", "success")
             self.monitor_process()
 
         except Exception as e:
@@ -260,12 +262,15 @@ class ServiceWorker(QThread):
         if not self.process:
             return
 
+        service_name = self.service.get("name")
+
         while self._is_running and self.process.poll() is None:
             time.sleep(0.5)
             if self.process.stdout:
                 output = self.process.stdout.readline()
                 if output:
-                    self.log_signal.emit(output.strip(), "output")
+                    # self.log_signal.emit(output.strip(), "output")
+                    self.log_signal.emit(f"[{service_name}]{' '*(GAP-2-len(service_name))} {output.strip()}", "output")
 
         if self.process and self.process.poll() is not None:
             self.process_stopped.emit(self.service.get("name"), self.process.pid)
@@ -913,7 +918,7 @@ class MainWindow(QMainWindow):
         self.current_project = filename
         self.project_data = project_data
         self.refresh_display()
-        self.log(f"Создан проект: {name}")
+        self.log(f"[Service Launcher]{' '*(GAP-18)} Создан проект: {name}")
 
     def open_project(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -932,7 +937,7 @@ class MainWindow(QMainWindow):
 
             self.current_project = path
             self.refresh_display()
-            self.log(f"Загружен проект: {self.project_data.get('name')}")
+            self.log(f"[Service Launcher]{' '*(GAP-18)} Загружен проект: {self.project_data.get('name')}")
 
             if "root_dir" in self.project_data and self.project_data["root_dir"]:
                 os.chdir(self.project_data["root_dir"])
@@ -949,7 +954,7 @@ class MainWindow(QMainWindow):
             self.project_data["modified"] = datetime.now().isoformat()
             with open(self.current_project, 'w', encoding='utf-8') as f:
                 json.dump(self.project_data, f, ensure_ascii=False, indent=2)
-            self.log(f"Проект сохранен: {self.project_data.get('name')}")
+            self.log(f"[Service Launcher]{' '*(GAP-18)} Проект сохранен: {self.project_data.get('name')}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить проект: {e}")
 
@@ -1162,7 +1167,7 @@ class MainWindow(QMainWindow):
 
                     if not self._is_closing:
                         for service_name in dead_services:
-                            self.log(f"💀 Сервис {service_name} завершился", "warning")
+                            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} 💀 Сервис {service_name} завершился", "warning")
                         QTimer.singleShot(0, self.refresh_display)
 
         self.monitor_stop_event.clear()
@@ -1454,29 +1459,29 @@ class MainWindow(QMainWindow):
 
         if all_deps:
             dep_names = [d.get("name") for d in all_deps]
-            self.log(f"📋 Цепочка зависимостей для {service_name}: {' → '.join(dep_names)} → {service_name}")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} 📋 Цепочка зависимостей для {service_name}: {' → '.join(dep_names)} → {service_name}")
 
         for dep in all_deps:
             dep_name = dep.get("name")
 
             if self.is_service_running(dep_name):
-                self.log(f"✅ Зависимость {dep_name} уже запущена")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ Зависимость {dep_name} уже запущена")
                 continue
 
             if dep_name in self.starting_services:
-                self.log(f"⏳ Зависимость {dep_name} уже запускается, ждем...")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⏳ Зависимость {dep_name} уже запускается, ждем...")
                 if not self.wait_for_service_ready(dep):
-                    self.log(f"❌ Ошибка: зависимость {dep_name} не запустилась", "error")
+                    self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Ошибка: зависимость {dep_name} не запустилась", "error")
                     return False
                 continue
 
-            self.log(f"🔄 Запуск зависимости: {dep_name}")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} 🔄 Запуск зависимости: {dep_name}")
             if not self.start_single_service(dep):
-                self.log(f"❌ Ошибка: не удалось запустить {dep_name}", "error")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Ошибка: не удалось запустить {dep_name}", "error")
                 return False
 
             if not self.wait_for_service_ready(dep):
-                self.log(f"❌ Ошибка: зависимость {dep_name} не запустилась", "error")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Ошибка: зависимость {dep_name} не запустилась", "error")
                 return False
 
         return True
@@ -1489,7 +1494,7 @@ class MainWindow(QMainWindow):
         port = service.get("port")
         health_path = service.get("health_path", "/health")
 
-        self.log(f"⏳ Ожидание готовности {service_name} ...")
+        self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⏳ Ожидание готовности {service_name} ...")
 
         wait_start = time.time()
         while time.time() - wait_start < 5:
@@ -1499,7 +1504,7 @@ class MainWindow(QMainWindow):
             time.sleep(0.1)
 
         if not self.is_service_running(service_name):
-            self.log(f"⚠️ Сервис {service_name} не зарегистрирован в системе")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⚠️ Сервис {service_name} не зарегистрирован в системе")
             return False
 
         while time.time() - start < timeout:
@@ -1514,23 +1519,23 @@ class MainWindow(QMainWindow):
                             status = data.get("status", "").lower()
                             if status in ["ok", "healthy", "up"]:
                                 elapsed = int(time.time() - start)
-                                self.log(f"✅ Сервис {service_name} готов (health check OK, через {elapsed} сек)")
+                                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ Сервис {service_name} готов (health check OK, через {elapsed} сек)")
                                 return True
                         except:
                             if "ok" in response.text.lower() or "healthy" in response.text.lower():
                                 elapsed = int(time.time() - start)
-                                self.log(f"✅ Сервис {service_name} готов (health check OK, через {elapsed} сек)")
+                                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ Сервис {service_name} готов (health check OK, через {elapsed} сек)")
                                 return True
                 except:
                     pass
             else:
                 time.sleep(3)
-                self.log(f"✅ Сервис {service_name} готов (процесс запущен)")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ Сервис {service_name} готов (процесс запущен)")
                 return True
 
             time.sleep(1)
 
-        self.log(f"⚠️ Таймаут ожидания готовности {service_name} ({timeout} сек)")
+        self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⚠️ Таймаут ожидания готовности {service_name} ({timeout} сек)")
         return False
 
     def start_single_service(self, service):
@@ -1541,22 +1546,22 @@ class MainWindow(QMainWindow):
 
         with self.process_lock:
             if self.is_service_running(service_name):
-                self.log(f"Сервис {service_name} уже запущен")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис {service_name} уже запущен")
                 return True
 
             if service_name in self.starting_services:
-                self.log(f"Сервис {service_name} уже запускается")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис {service_name} уже запускается")
                 return True
 
         if service.get("port"):
             host = service.get("host", "127.0.0.1")
             port = service["port"]
             if not self.is_port_available(host, port):
-                self.log(f"⚠️ Порт {port} уже занят, возможно сервис уже запущен")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⚠️ Порт {port} уже занят, возможно сервис уже запущен")
                 self.kill_process_on_port(port)
                 time.sleep(1)
                 if not self.is_port_available(host, port):
-                    self.log(f"❌ Порт {port} всё ещё занят, не могу запустить {service_name}", "error")
+                    self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Порт {port} всё ещё занят, не могу запустить {service_name}", "error")
                     return False
 
         with self.process_lock:
@@ -1577,15 +1582,15 @@ class MainWindow(QMainWindow):
             start_time = time.time()
             while time.time() - start_time < timeout:
                 if self.is_service_running(service_name):
-                    self.log(f"✅ Сервис {service_name} зарегистрирован в системе")
+                    self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ Сервис {service_name} зарегистрирован в системе")
                     return True
                 time.sleep(0.1)
 
-            self.log(f"⚠️ Сервис {service_name} запущен, но не зарегистрирован в системе")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⚠️ Сервис {service_name} запущен, но не зарегистрирован в системе")
             return True
 
         except Exception as e:
-            self.log(f"❌ Ошибка запуска {service_name}: {e}", "error")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Ошибка запуска {service_name}: {e}", "error")
             with self.process_lock:
                 self.starting_services.discard(service_name)
             return False
@@ -1597,22 +1602,22 @@ class MainWindow(QMainWindow):
         service_name = service.get("name")
 
         if self.is_service_running(service_name):
-            self.log(f"Сервис {service_name} уже запущен")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис {service_name} уже запущен")
             return True
 
         if service_name in self.starting_services:
-            self.log(f"Сервис {service_name} уже запускается")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис {service_name} уже запускается")
             return True
 
         if self.project_data and self.project_data.get("settings", {}).get("auto_start_dependencies", True):
-            self.log(f"🔍 Проверка зависимостей для {service_name}")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} 🔍 Проверка зависимостей для {service_name}")
 
             if not self.check_and_start_dependencies(service):
-                self.log(f"❌ Не удалось запустить зависимости для {service_name}", "error")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ❌ Не удалось запустить зависимости для {service_name}", "error")
                 return False
 
             if self.is_service_running(service_name):
-                self.log(f"Сервис {service_name} был запущен через зависимости")
+                self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис {service_name} был запущен через зависимости")
                 return True
 
         return self.start_single_service(service)
@@ -1637,7 +1642,7 @@ class MainWindow(QMainWindow):
 
         terminal_services = [s for s in services if s.get("name") not in all_deps]
 
-        self.log(f"🍃 Терминальные сервисы: {[s.get('name') for s in terminal_services]}")
+        self.log(f"[Service Launcher]{' '*(GAP-18)} 🍃 Терминальные сервисы: {[s.get('name') for s in terminal_services]}")
 
         for service in terminal_services:
             self.start_service(service)
@@ -1661,13 +1666,13 @@ class MainWindow(QMainWindow):
                 running_services.append(service)
 
         if not running_services:
-            self.log("Нет запущенных сервисов")
+            self.log("Service Launcher: Нет запущенных сервисов")
             return
 
         # Упорядочить для остановки (зависимости останавливаем первыми)
         services_to_stop = self.order_services_by_dependencies_reverse(running_services)
 
-        self.log(f"Остановка {len(services_to_stop)} сервисов в правильном порядке...")
+        self.log(f"[Service Launcher]{' '*(GAP-18)} Остановка {len(services_to_stop)} сервисов в правильном порядке...")
 
         for service in services_to_stop:
             self.stop_service_gracefully(service)
@@ -1687,7 +1692,7 @@ class MainWindow(QMainWindow):
         with self.process_lock:
             self.service_root_pids[service_name] = pid
         self.starting_services.discard(service_name)
-        self.log(f"✅ {service_name} запущен (PID: {pid})", "success")
+        self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ {service_name} запущен (PID: {pid})", "success")
         QTimer.singleShot(0, self.refresh_display)
 
     def on_process_stopped(self, service_name, pid):
@@ -1702,7 +1707,7 @@ class MainWindow(QMainWindow):
                 del self.service_root_pids[service_name]
             self.starting_services.discard(service_name)
 
-        self.log(f"🛑 {service_name} остановлен (PID: {pid})")
+        self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} 🛑 {service_name} остановлен (PID: {pid})")
         QTimer.singleShot(0, self.refresh_display)
 
     def add_service(self):
@@ -1747,7 +1752,7 @@ class MainWindow(QMainWindow):
             self.project_data["services"] = services
             self.save_project()
             self.refresh_display()
-            self.log(f"Сервис {'обновлен' if service else 'добавлен'}: {service_data['name']}")
+            self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис {'обновлен' if service else 'добавлен'}: {service_data['name']}")
 
     def delete_service(self):
         current = self.services_tree.currentItem()
@@ -1768,7 +1773,7 @@ class MainWindow(QMainWindow):
             self.project_data["services"] = services
             self.save_project()
             self.refresh_display()
-            self.log(f"Сервис удален: {service_name}")
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис удален: {service_name}")
 
     def import_config(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -1786,11 +1791,11 @@ class MainWindow(QMainWindow):
                     dest = PROJECTS_DIR / Path(filename).name
                     shutil.copy2(filename, dest)
                     self.load_projects_list()
-                    self.log(f"Импортирован проект: {Path(filename).name}")
+                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован проект: {Path(filename).name}")
                 else:
                     dest = SERVICES_DIR / Path(filename).name
                     shutil.copy2(filename, dest)
-                    self.log(f"Импортирован сервис: {Path(filename).name}")
+                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован сервис: {Path(filename).name}")
 
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Не удалось импортировать: {e}")
@@ -1809,7 +1814,7 @@ class MainWindow(QMainWindow):
             try:
                 with open(filename, 'w', encoding='utf-8') as f:
                     json.dump(self.project_data, f, ensure_ascii=False, indent=2)
-                self.log(f"Экспортирован проект: {Path(filename).name}")
+                self.log(f"[Service Launcher]{' '*(GAP-18)} Экспортирован проект: {Path(filename).name}")
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Не удалось экспортировать: {e}")
 
@@ -1831,7 +1836,7 @@ class MainWindow(QMainWindow):
                     self.project_data["services"] = services
                     self.save_project()
                     self.refresh_display()
-                    self.log(f"Импортирован сервис: {service_data.get('name')}")
+                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован сервис: {service_data.get('name')}")
 
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Не удалось импортировать сервис: {e}")
@@ -1846,7 +1851,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.project_data["settings"] = dialog.get_settings()
             self.save_project()
-            self.log("Настройки проекта сохранены")
+            self.log("Service Launcher: Настройки проекта сохранены")
 
     def global_settings(self):
         QMessageBox.information(self, "Информация", "Глобальные настройки будут доступны в следующей версии")
@@ -1942,7 +1947,7 @@ class MainWindow(QMainWindow):
                     except:
                         pass
         except Exception as e:
-            self.log(f"Ошибка при убийстве процесса на порту {port}: {e}")
+            self.log(f"[Service Launcher]{' '*(GAP-18)} Ошибка при убийстве процесса на порту {port}: {e}")
 
         return False
 
@@ -1952,7 +1957,7 @@ class MainWindow(QMainWindow):
             if self.is_port_available(host, port):
                 return True
             time.sleep(1)
-        self.log(f"Таймаут ожидания порта {port} ({timeout} сек)")
+        self.log(f"[Service Launcher]{' '*(GAP-18)} Таймаут ожидания порта {port} ({timeout} сек)")
         return False
 
     def cleanup_and_exit(self, event):
@@ -2022,7 +2027,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
 
-        # self.log(f"✅ Завершение программы ...")
+        # self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ✅ Завершение программы ...")
 
         self._closing_started = True
         self._is_closing = True
