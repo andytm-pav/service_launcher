@@ -754,7 +754,7 @@ class MainWindow(QMainWindow):
         filter_layout = QHBoxLayout(filter_panel)
         filter_layout.setContentsMargins(0, 0, 0, 5)
         
-        filter_label = QLabel("Фильтр логов:")
+        filter_label = QLabel("Логи:")
         filter_label.setFont(QFont("Arial", 9, QFont.Bold))
         filter_layout.addWidget(filter_label)
         
@@ -771,9 +771,9 @@ class MainWindow(QMainWindow):
         
         log_layout.addWidget(filter_panel)
 
-        log_label = QLabel("Логи")
-        log_label.setFont(QFont("Arial", 10, QFont.Bold))
-        log_layout.addWidget(log_label)
+        # log_label = QLabel("Логи")
+        # log_label.setFont(QFont("Arial", 10, QFont.Bold))
+        # log_layout.addWidget(log_label)
 
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
