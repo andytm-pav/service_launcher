@@ -20,6 +20,7 @@ import socket
 import json
 import signal
 from os import terminal_size
+import re
 
 import psutil
 from pathlib import Path
@@ -43,7 +44,7 @@ from PySide6.QtGui import (
 
 # Configuration
 APP_NAME = "Universal Service Launcher"
-APP_VERSION = "0.3"
+APP_VERSION = "0.4"
 # CONFIG_DIR = Path.home() / "./service_launcher/configurations"
 CONFIG_DIR = Path.cwd() / "configurations"
 PROJECTS_DIR = CONFIG_DIR / "projects"
@@ -640,11 +641,18 @@ class MainWindow(QMainWindow):
         self.monitor_stop_event = threading.Event()
         self._is_closing = False
         self._closing_started = False
+        
+        # Хранилище для логов
+        self.all_log_entries = []  # Список всех логов (каждый элемент - строка)
+        self.log_filters = set()   # Уникальные имена из квадратных скобок
+        self.current_log_filter = None  # Текущий выбранный фильтр
 
         self.start_all_btn = QPushButton("Запустить все")
         self.stop_all_btn = QPushButton("Остановить все")
         self.restart_all_btn = QPushButton("Перезапустить все")
         self.project_combo = QComboBox()
+        self.log_filter_combo = QComboBox()  # Выпадающий список для фильтрации логов
+        self.clear_filter_btn = QPushButton("Сбросить фильтр")  # Кнопка сброса фильтра
 
         self.menubar = self.menuBar()
 
@@ -740,6 +748,28 @@ class MainWindow(QMainWindow):
         log_container = QWidget()
         log_layout = QVBoxLayout(log_container)
         log_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Панель фильтрации логов
+        filter_panel = QWidget()
+        filter_layout = QHBoxLayout(filter_panel)
+        filter_layout.setContentsMargins(0, 0, 0, 5)
+        
+        filter_label = QLabel("Фильтр логов:")
+        filter_label.setFont(QFont("Arial", 9, QFont.Bold))
+        filter_layout.addWidget(filter_label)
+        
+        self.log_filter_combo.setMinimumWidth(200)
+        self.log_filter_combo.addItem("Все логи", None)  # Добавляем пункт "Все логи"
+        self.log_filter_combo.currentIndexChanged.connect(self.on_log_filter_changed)
+        filter_layout.addWidget(self.log_filter_combo)
+        
+        self.clear_filter_btn.clicked.connect(self.clear_log_filter)
+        self.clear_filter_btn.setFixedWidth(120)
+        filter_layout.addWidget(self.clear_filter_btn)
+        
+        filter_layout.addStretch()
+        
+        log_layout.addWidget(filter_panel)
 
         log_label = QLabel("Логи")
         log_label.setFont(QFont("Arial", 10, QFont.Bold))
@@ -973,6 +1003,78 @@ class MainWindow(QMainWindow):
             self.project_data["modified"] = datetime.now().isoformat()
             self.save_project()
 
+    def extract_service_name_from_log(self, log_message):
+        """Извлечение имени сервиса из квадратных скобок в логе"""
+        # Паттерн для поиска текста в квадратных скобках в начале строки
+        # Например: [14:28:23] ℹ️ [Service Launcher] -> Service Launcher
+        pattern = r'\[\d{2}:\d{2}:\d{2}\]\s+[^[]*\[([^\]]+)\]'
+        match = re.search(pattern, log_message)
+        if match:
+            return match.group(1).strip()
+        return None
+
+    def update_log_filters(self, log_message):
+        """Обновление списка уникальных фильтров на основе нового лога"""
+        service_name = self.extract_service_name_from_log(log_message)
+        if service_name and service_name not in self.log_filters:
+            self.log_filters.add(service_name)
+            # Обновляем выпадающий список
+            self.refresh_log_filter_combo()
+
+    def refresh_log_filter_combo(self):
+        """Обновление выпадающего списка фильтров"""
+        # Сохраняем текущее выделение
+        current_text = self.log_filter_combo.currentText()
+        
+        # Очищаем и перезаполняем
+        self.log_filter_combo.clear()
+        self.log_filter_combo.addItem("Все логи", None)
+        
+        # Добавляем отсортированные уникальные имена
+        for name in sorted(self.log_filters):
+            self.log_filter_combo.addItem(name, name)
+        
+        # Восстанавливаем выделение, если возможно
+        if current_text and current_text != "Все логи":
+            index = self.log_filter_combo.findText(current_text)
+            if index >= 0:
+                self.log_filter_combo.setCurrentIndex(index)
+            else:
+                self.log_filter_combo.setCurrentIndex(0)
+        else:
+            self.log_filter_combo.setCurrentIndex(0)
+
+    def on_log_filter_changed(self, index):
+        """Обработка изменения фильтра логов"""
+        if index >= 0:
+            self.current_log_filter = self.log_filter_combo.itemData(index)
+            self.apply_log_filter()
+
+    def clear_log_filter(self):
+        """Сброс фильтра логов"""
+        self.log_filter_combo.setCurrentIndex(0)
+        self.current_log_filter = None
+        self.apply_log_filter()
+
+    def apply_log_filter(self):
+        """Применение фильтра к отображаемым логам"""
+        if self._is_closing:
+            return
+        
+        # Очищаем виджет логов
+        self.log_text.clear()
+        
+        # Если нет фильтра или выбран "Все логи", показываем все записи
+        if not self.current_log_filter:
+            for log_entry in self.all_log_entries:
+                self.log_text.appendPlainText(log_entry)
+        else:
+            # Показываем только записи, соответствующие фильтру
+            for log_entry in self.all_log_entries:
+                service_name = self.extract_service_name_from_log(log_entry)
+                if service_name == self.current_log_filter:
+                    self.log_text.appendPlainText(log_entry)
+
     def customEvent(self, event):
         if isinstance(event, LogEvent):
             try:
@@ -1008,7 +1110,24 @@ class MainWindow(QMainWindow):
             log_entry = f"[{timestamp}] ℹ️ {message}"
 
         try:
-            self.log_text.appendPlainText(log_entry)
+            # Сохраняем запись в хранилище
+            self.all_log_entries.append(log_entry)
+            
+            # Ограничиваем количество хранимых записей (опционально)
+            if len(self.all_log_entries) > 10000:
+                self.all_log_entries = self.all_log_entries[-5000:]
+            
+            # Обновляем фильтры на основе нового сообщения
+            self.update_log_filters(log_entry)
+            
+            # Применяем текущий фильтр
+            if not self.current_log_filter:
+                self.log_text.appendPlainText(log_entry)
+            else:
+                service_name = self.extract_service_name_from_log(log_entry)
+                if service_name == self.current_log_filter:
+                    self.log_text.appendPlainText(log_entry)
+            
             print(log_entry)
         except Exception as e:
             print(f"Error writing log: {e}")
@@ -1870,6 +1989,7 @@ class MainWindow(QMainWindow):
 - Graceful shutdown сервисов (корректное завершение)
 - Редактор конфигураций
 - Импорт/экспорт проектов
+- Фильтрация логов по сервисам
 
 Директория конфигурации:
 {CONFIG_DIR}
@@ -1889,6 +2009,7 @@ class MainWindow(QMainWindow):
 - Индивидуальные Python окружения для каждого сервиса
 - Автоматический health check
 - Обнаружение и остановка всех дочерних процессов (multiprocessing)
+- Фильтрация логов по сервисам (автоматическое извлечение имен из квадратных скобок)
 
 Лицензия: MIT
 
