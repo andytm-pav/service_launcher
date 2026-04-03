@@ -627,6 +627,9 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.hide_pings_checkbox = None
+        self.clear_log_btn = None
+        self.hide_health_checks = False  # Флаг для скрытия health check логов
         self.process_info = {}  # pid -> service_name
         self.service_root_pids = {}  # service_name -> root_pid
         self.process_lock = threading.RLock()
@@ -641,7 +644,7 @@ class MainWindow(QMainWindow):
         self.monitor_stop_event = threading.Event()
         self._is_closing = False
         self._closing_started = False
-        
+
         # Хранилище для логов
         self.all_log_entries = []  # Список всех логов (каждый элемент - строка)
         self.log_filters = set()   # Уникальные имена из квадратных скобок
@@ -683,6 +686,7 @@ class MainWindow(QMainWindow):
         LOG_DIR.mkdir(exist_ok=True)
 
     def setup_ui(self):
+        # self.hide_health_checks = False  # Флаг для скрытия health check логов
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.setMinimumSize(1200, 800)
 
@@ -767,6 +771,11 @@ class MainWindow(QMainWindow):
         self.clear_filter_btn.setFixedWidth(120)
         filter_layout.addWidget(self.clear_filter_btn)
 
+        # Чекбокс для скрытия пингов
+        self.hide_pings_checkbox = QCheckBox("Убрать пинги")
+        self.hide_pings_checkbox.stateChanged.connect(self.on_hide_pings_changed)
+        filter_layout.addWidget(self.hide_pings_checkbox)
+
         filter_layout.addStretch()
 
         self.clear_log_btn = QPushButton("Очистить лог")
@@ -796,6 +805,27 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("Готов к работе")
         self.statusBar().addWidget(self.status_label)
+
+    def on_hide_pings_changed(self, state):
+        """Обработка изменения состояния чекбокса 'Убрать пинги'"""
+        self.hide_health_checks = self.hide_pings_checkbox.isChecked()
+        # print(f"DEBUG: hide_health_checks установлен в {self.hide_health_checks}")
+        self.apply_log_filter()
+
+    def is_ping_message(self, log_message):
+        """Проверка, является ли сообщение пингом (health check или API опрос)"""
+        # Удаляем ANSI escape последовательности (цвета)
+        clean_message = re.sub(r'\x1b\[[0-9;]*m', '', log_message)
+
+        # Простая проверка
+        if '/health' in clean_message:
+            # print(f"DEBUG: /health найден в: {clean_message[:80]}")
+            return True
+        if '/api/data?limit=' in clean_message:
+            # print(f"DEBUG: /api/data найден в: {clean_message[:80]}")
+            return True
+
+        return False
 
     def clear_log(self):
         """Очистка логов"""
@@ -1078,23 +1108,34 @@ class MainWindow(QMainWindow):
         self.apply_log_filter()
 
     def apply_log_filter(self):
-        """Применение фильтра к отображаемым логам"""
+        """Применение фильтра к отображаемым логам (перерисовка всех логов)"""
         if self._is_closing:
             return
-        
+
         # Очищаем виджет логов
         self.log_text.clear()
-        
-        # Если нет фильтра или выбран "Все логи", показываем все записи
-        if not self.current_log_filter:
-            for log_entry in self.all_log_entries:
-                self.log_text.appendPlainText(log_entry)
-        else:
-            # Показываем только записи, соответствующие фильтру
-            for log_entry in self.all_log_entries:
+
+        # print(f"DEBUG: apply_log_filter вызван, hide_health_checks={self.hide_health_checks}")
+
+        # Перебираем все сохраненные логи
+        for log_entry in self.all_log_entries:
+            show_log = True
+
+            # Проверка фильтра по сервису
+            if self.current_log_filter:
                 service_name = self.extract_service_name_from_log(log_entry)
-                if service_name == self.current_log_filter:
-                    self.log_text.appendPlainText(log_entry)
+                if service_name != self.current_log_filter:
+                    show_log = False
+
+            # Проверка на пинги
+            if show_log and self.hide_health_checks:
+                is_ping = self.is_ping_message(log_entry)
+                if is_ping:
+                    # print(f"DEBUG: Скрываем пинг: {log_entry[:80]}")
+                    show_log = False
+
+            if show_log:
+                self.log_text.appendPlainText(log_entry)
 
     def customEvent(self, event):
         if isinstance(event, LogEvent):
@@ -1133,22 +1174,34 @@ class MainWindow(QMainWindow):
         try:
             # Сохраняем запись в хранилище
             self.all_log_entries.append(log_entry)
-            
-            # Ограничиваем количество хранимых записей (опционально)
+
+            # Ограничиваем количество хранимых записей
             if len(self.all_log_entries) > 10000:
                 self.all_log_entries = self.all_log_entries[-5000:]
-            
+
             # Обновляем фильтры на основе нового сообщения
             self.update_log_filters(log_entry)
-            
-            # Применяем текущий фильтр
-            if not self.current_log_filter:
-                self.log_text.appendPlainText(log_entry)
-            else:
+
+            # Проверяем, нужно ли показывать этот лог с учетом текущих фильтров
+            show_log = True
+
+            # Проверка фильтра по сервису
+            if self.current_log_filter:
                 service_name = self.extract_service_name_from_log(log_entry)
-                if service_name == self.current_log_filter:
-                    self.log_text.appendPlainText(log_entry)
-            
+                if service_name != self.current_log_filter:
+                    show_log = False
+
+            # Проверка на пинги
+            if show_log and self.hide_health_checks:
+                is_ping = self.is_ping_message(log_entry)
+                # print(f"DEBUG: hide_health_checks={self.hide_health_checks}, is_ping={is_ping}, msg={log_entry[:80]}")
+                if is_ping:
+                    show_log = False
+
+            # Показываем лог, если прошел все фильтры
+            if show_log:
+                self.log_text.appendPlainText(log_entry)
+
             print(log_entry)
         except Exception as e:
             print(f"Error writing log: {e}")
