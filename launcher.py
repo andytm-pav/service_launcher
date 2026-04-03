@@ -856,6 +856,10 @@ class MainWindow(QMainWindow):
         self.project_combo.currentTextChanged.connect(self.on_project_select)
         layout.addWidget(self.project_combo)
 
+        refresh_btn = QPushButton("Обновить")
+        refresh_btn.clicked.connect(self.refresh_display)
+        layout.addWidget(refresh_btn)
+
         layout.addStretch()
 
         self.start_all_btn.clicked.connect(self.start_all)
