@@ -61,7 +61,11 @@ DEFAULT_CONFIG = {
         "auto_start_dependencies": True,
         "graceful_shutdown_timeout": 30,
         "log_level": "INFO"
-    }
+    },
+    "ping_filters": [
+        "/health",
+        "/api/data?limit="
+    ]
 }
 
 # Colors
@@ -817,13 +821,14 @@ class MainWindow(QMainWindow):
         # Удаляем ANSI escape последовательности (цвета)
         clean_message = re.sub(r'\x1b\[[0-9;]*m', '', log_message)
 
-        # Простая проверка
-        if '/health' in clean_message:
-            # print(f"DEBUG: /health найден в: {clean_message[:80]}")
-            return True
-        if '/api/data?limit=' in clean_message:
-            # print(f"DEBUG: /api/data найден в: {clean_message[:80]}")
-            return True
+        # Получаем фильтры из конфига проекта
+        ping_filters = self.project_data.get("ping_filters", DEFAULT_CONFIG["ping_filters"]) if self.project_data else \
+        DEFAULT_CONFIG["ping_filters"]
+
+        # Проверяем каждый фильтр
+        for filter_text in ping_filters:
+            if filter_text in clean_message:
+                return True
 
         return False
 
@@ -863,6 +868,91 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.restart_all_btn)
 
         return toolbar_widget
+
+    def edit_ping_filters(self):
+        """Диалог для редактирования фильтров пингов"""
+        if not self.project_data:
+            QMessageBox.warning(self, "Ошибка", "Нет загруженного проекта")
+            return
+
+        # Получаем текущие фильтры
+        current_filters = self.project_data.get("ping_filters", DEFAULT_CONFIG["ping_filters"])
+
+        # Создаем диалог
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Настройка фильтров пингов")
+        dialog.setMinimumWidth(500)
+        dialog.setMinimumHeight(400)
+
+        layout = QVBoxLayout(dialog)
+
+        label = QLabel("Строки, содержащие эти тексты, будут скрыты из логов при включенном фильтре 'Убрать пинги':")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        # Список фильтров
+        filters_list = QListWidget()
+        filters_list.addItems(current_filters)
+        layout.addWidget(filters_list)
+
+        # Кнопки управления
+        buttons_layout = QHBoxLayout()
+
+        add_btn = QPushButton("Добавить")
+        remove_btn = QPushButton("Удалить")
+        edit_btn = QPushButton("Редактировать")
+
+        buttons_layout.addWidget(add_btn)
+        buttons_layout.addWidget(edit_btn)
+        buttons_layout.addWidget(remove_btn)
+        buttons_layout.addStretch()
+
+        layout.addLayout(buttons_layout)
+
+        # Функции для кнопок
+        def add_filter():
+            text, ok = QInputDialog.getText(dialog, "Добавить фильтр", "Введите текст для фильтрации:")
+            if ok and text.strip():
+                filters_list.addItem(text.strip())
+
+        def edit_filter():
+            current = filters_list.currentItem()
+            if current:
+                text, ok = QInputDialog.getText(dialog, "Редактировать фильтр", "Введите текст для фильтрации:",
+                                                text=current.text())
+                if ok and text.strip():
+                    current.setText(text.strip())
+
+        def remove_filter():
+            current = filters_list.currentItem()
+            if current:
+                row = filters_list.row(current)
+                filters_list.takeItem(row)
+
+        add_btn.clicked.connect(add_filter)
+        edit_btn.clicked.connect(edit_filter)
+        remove_btn.clicked.connect(remove_filter)
+
+        # Кнопки OK/Cancel
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() == QDialog.Accepted:
+            # Сохраняем фильтры
+            new_filters = []
+            for i in range(filters_list.count()):
+                new_filters.append(filters_list.item(i).text())
+
+            self.project_data["ping_filters"] = new_filters
+            self.save_project()
+
+            # Переприменяем фильтр логов
+            if self.hide_health_checks:
+                self.apply_log_filter()
+
+            self.log(f"[Service Launcher]{' ' * (GAP - 18)} Фильтры пингов обновлены")
 
     def setup_menu(self, menubar):
         # File menu
@@ -928,6 +1018,11 @@ class MainWindow(QMainWindow):
         project_settings_action.triggered.connect(self.project_settings)
         settings_menu.addAction(project_settings_action)
 
+        # Новый пункт меню
+        ping_filters_action = QAction("Настройка фильтров пингов", self)
+        ping_filters_action.triggered.connect(self.edit_ping_filters)
+        settings_menu.addAction(ping_filters_action)
+
         global_settings_action = QAction("Глобальные настройки", self)
         global_settings_action.triggered.connect(self.global_settings)
         settings_menu.addAction(global_settings_action)
@@ -986,6 +1081,7 @@ class MainWindow(QMainWindow):
             "description": description,
             "services": [],
             "settings": DEFAULT_CONFIG["settings"].copy(),
+            "ping_filters": DEFAULT_CONFIG["ping_filters"].copy(),
             "created": datetime.now().isoformat(),
             "modified": datetime.now().isoformat()
         }
@@ -1016,9 +1112,13 @@ class MainWindow(QMainWindow):
             with open(path, 'r', encoding='utf-8') as f:
                 self.project_data = json.load(f)
 
+            # Загружаем ping_filters, если их нет - создаем со значениями по умолчанию
+            if "ping_filters" not in self.project_data:
+                self.project_data["ping_filters"] = DEFAULT_CONFIG["ping_filters"].copy()
+
             self.current_project = path
             self.refresh_display()
-            self.log(f"[Service Launcher]{' '*(GAP-18)} Загружен проект: {self.project_data.get('name')}")
+            self.log(f"[Service Launcher]{' ' * (GAP - 18)} Загружен проект: {self.project_data.get('name')}")
 
             if "root_dir" in self.project_data and self.project_data["root_dir"]:
                 os.chdir(self.project_data["root_dir"])
