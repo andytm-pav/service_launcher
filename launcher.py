@@ -684,7 +684,7 @@ class MainWindow(QMainWindow):
 
     def setup_ui(self):
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(1200, 700)
+        self.setMinimumSize(1200, 800)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -724,8 +724,8 @@ class MainWindow(QMainWindow):
                 border: 1px solid #ccc;
             }
             QTreeWidget::item {
-                padding: 8px;
-                height: 40px;
+                padding: 5px;
+                height: 30px;
                 border-bottom: 1px solid #eee;
             }
             QTreeWidget::item:hover {
@@ -736,7 +736,7 @@ class MainWindow(QMainWindow):
             }
             QHeaderView::section {
                 background-color: #f0f0f0;
-                padding: 8px;
+                padding: 5px;
                 border: 1px solid #ddd;
                 font-weight: bold;
             }
