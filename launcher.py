@@ -3,7 +3,7 @@
 # pip install PyInstaller
 # pip install --upgrade PyInstaller pyinstaller-hooks-contrib
 
-# pyinstaller --windowed --onefile --name Service_launcher launcher_pyside6.py
+# pyinstaller --windowed --onefile --name Service_launcher launcher.py
 
 """
 Universal Service Launcher - PySide6 Version
