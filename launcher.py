@@ -758,7 +758,7 @@ class MainWindow(QMainWindow):
         filter_label.setFont(QFont("Arial", 9, QFont.Bold))
         filter_layout.addWidget(filter_label)
         
-        self.log_filter_combo.setMinimumWidth(200)
+        self.log_filter_combo.setMinimumWidth(300)
         self.log_filter_combo.addItem("Все логи", None)  # Добавляем пункт "Все логи"
         self.log_filter_combo.currentIndexChanged.connect(self.on_log_filter_changed)
         filter_layout.addWidget(self.log_filter_combo)
@@ -767,12 +767,14 @@ class MainWindow(QMainWindow):
         self.clear_filter_btn.setFixedWidth(120)
         filter_layout.addWidget(self.clear_filter_btn)
 
+        filter_layout.addStretch()
+
         self.clear_log_btn = QPushButton("Очистить лог")
         self.clear_log_btn.setFixedWidth(120)
         self.clear_log_btn.clicked.connect(self.clear_log)
         filter_layout.addWidget(self.clear_log_btn)
         
-        filter_layout.addStretch()
+        # filter_layout.addStretch()
         
         log_layout.addWidget(filter_panel)
 
