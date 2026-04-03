@@ -766,6 +766,11 @@ class MainWindow(QMainWindow):
         self.clear_filter_btn.clicked.connect(self.clear_log_filter)
         self.clear_filter_btn.setFixedWidth(120)
         filter_layout.addWidget(self.clear_filter_btn)
+
+        self.clear_log_btn = QPushButton("Очистить лог")
+        self.clear_log_btn.setFixedWidth(120)
+        self.clear_log_btn.clicked.connect(self.clear_log)
+        filter_layout.addWidget(self.clear_log_btn)
         
         filter_layout.addStretch()
         
@@ -789,6 +794,20 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("Готов к работе")
         self.statusBar().addWidget(self.status_label)
+
+    def clear_log(self):
+        """Очистка логов"""
+        if self._is_closing:
+            return
+
+        # Очищаем хранилище логов
+        self.all_log_entries = []
+
+        # Очищаем виджет логов
+        self.log_text.clear()
+
+        # Не очищаем фильтры, только логи
+        self.log(f"[Service Launcher]{' ' * (GAP - 18)} Логи очищены")
 
     def create_toolbar(self):
         toolbar_widget = QWidget()
