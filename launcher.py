@@ -304,7 +304,7 @@ class ServiceDialog(QDialog):
     def setup_ui(self):
         self.setWindowTitle("Редактирование сервиса" if self.service else "Новый сервис")
         self.setMinimumWidth(600)
-        self.setMinimumHeight(550)
+        self.setMinimumHeight(600)  # Увеличиваем высоту для нового поля
 
         layout = QVBoxLayout()
         form_layout = QFormLayout()
@@ -314,6 +314,13 @@ class ServiceDialog(QDialog):
         if self.service:
             self.name_edit.setText(self.service.get("name", ""))
         form_layout.addRow("Имя сервиса*:", self.name_edit)
+
+        # Comment - НОВОЕ ПОЛЕ
+        self.comment_edit = QLineEdit()
+        self.comment_edit.setPlaceholderText("Описание, заметки, назначение сервиса...")
+        if self.service:
+            self.comment_edit.setText(self.service.get("comment", ""))
+        form_layout.addRow("Комментарий:", self.comment_edit)
 
         # Script path
         script_layout = QHBoxLayout()
@@ -556,6 +563,7 @@ class ServiceDialog(QDialog):
     def get_service_data(self):
         return {
             "name": self.name_edit.text(),
+            "comment": self.comment_edit.text(),  # НОВОЕ ПОЛЕ
             "script": self.script_edit.text(),
             "python_path": self.python_combo.currentText(),
             "host": self.host_edit.text(),
@@ -653,12 +661,14 @@ class MainWindow(QMainWindow):
         self.all_log_entries = []  # Список всех логов (каждый элемент - строка)
         self.log_filters = set()   # Уникальные имена из квадратных скобок
         self.current_log_filter = None  # Текущий выбранный фильтр
+        self.custom_filter_text = ""    # Текст кастомного фильтра
 
         self.start_all_btn = QPushButton("Запустить все")
         self.stop_all_btn = QPushButton("Остановить все")
         self.restart_all_btn = QPushButton("Перезапустить все")
         self.project_combo = QComboBox()
         self.log_filter_combo = QComboBox()  # Выпадающий список для фильтрации логов
+        self.custom_filter_edit = QLineEdit()  # Поле для кастомного фильтра
         self.clear_filter_btn = QPushButton("Сбросить фильтр")  # Кнопка сброса фильтра
 
         self.menubar = self.menuBar()
@@ -713,19 +723,20 @@ class MainWindow(QMainWindow):
         self.services_tree.setAlternatingRowColors(True)
         self.services_tree.setSelectionBehavior(QTreeWidget.SelectRows)
 
-        headers = ["Статус", "Сервис", "Порт", "PID", "Python", "Зависимости", "Действия"]
+        headers = ["Статус", "Сервис", "Хост", "Порт", "PID", "Python", "Действия", "Комментарий"]
         self.services_tree.setColumnCount(len(headers))
         self.services_tree.setHeaderLabels(headers)
 
         header = self.services_tree.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        header.setStretchLastSection(True)  # Последняя колонка (Комментарий) будет растягиваться
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Статус
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Сервис
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Хост
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Порт
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # PID
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Python
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Действия
+        header.setSectionResizeMode(7, QHeaderView.Stretch)  # Комментарий (растягивается)
 
         self.services_tree.setStyleSheet("""
             QTreeWidget {
@@ -771,7 +782,15 @@ class MainWindow(QMainWindow):
         self.log_filter_combo.currentIndexChanged.connect(self.on_log_filter_changed)
         filter_layout.addWidget(self.log_filter_combo)
         
-        self.clear_filter_btn.clicked.connect(self.clear_log_filter)
+        # Поле кастомного фильтра
+        self.custom_filter_edit = QLineEdit()
+        self.custom_filter_edit.setPlaceholderText("Текстовый фильтр...")
+        self.custom_filter_edit.setMinimumWidth(200)
+        self.custom_filter_edit.textChanged.connect(self.on_custom_filter_changed)
+        filter_layout.addWidget(self.custom_filter_edit)
+
+        # Кнопка сброса фильтра
+        self.clear_filter_btn.clicked.connect(self.clear_all_filters)
         self.clear_filter_btn.setFixedWidth(120)
         filter_layout.addWidget(self.clear_filter_btn)
 
@@ -833,7 +852,7 @@ class MainWindow(QMainWindow):
         return False
 
     def clear_log(self):
-        """Очистка логов"""
+        """Очистка логов (фильтры остаются активными)"""
         if self._is_closing:
             return
 
@@ -1212,30 +1231,32 @@ class MainWindow(QMainWindow):
         self.apply_log_filter()
 
     def apply_log_filter(self):
-        """Применение фильтра к отображаемым логам (перерисовка всех логов)"""
+        """Применение комбинированного фильтра к отображаемым логам"""
         if self._is_closing:
             return
 
         # Очищаем виджет логов
         self.log_text.clear()
 
-        # print(f"DEBUG: apply_log_filter вызван, hide_health_checks={self.hide_health_checks}")
-
         # Перебираем все сохраненные логи
         for log_entry in self.all_log_entries:
             show_log = True
 
-            # Проверка фильтра по сервису
+            # 1. Проверка фильтра по сервису (из выпадающего списка)
             if self.current_log_filter:
                 service_name = self.extract_service_name_from_log(log_entry)
                 if service_name != self.current_log_filter:
                     show_log = False
 
-            # Проверка на пинги
+            # 2. Проверка кастомного текстового фильтра
+            if show_log and self.custom_filter_text:
+                # Ищем текст в любом месте строки (без учета регистра)
+                if self.custom_filter_text.lower() not in log_entry.lower():
+                    show_log = False
+
+            # 3. Проверка на пинги
             if show_log and self.hide_health_checks:
-                is_ping = self.is_ping_message(log_entry)
-                if is_ping:
-                    # print(f"DEBUG: Скрываем пинг: {log_entry[:80]}")
+                if self.is_ping_message(log_entry):
                     show_log = False
 
             if show_log:
@@ -1289,17 +1310,21 @@ class MainWindow(QMainWindow):
             # Проверяем, нужно ли показывать этот лог с учетом текущих фильтров
             show_log = True
 
-            # Проверка фильтра по сервису
+            # 1. Проверка фильтра по сервису (из выпадающего списка)
             if self.current_log_filter:
                 service_name = self.extract_service_name_from_log(log_entry)
                 if service_name != self.current_log_filter:
                     show_log = False
 
-            # Проверка на пинги
+            # 2. Проверка кастомного текстового фильтра
+            if show_log and self.custom_filter_text:
+                # Ищем текст в любом месте строки (без учета регистра)
+                if self.custom_filter_text.lower() not in log_entry.lower():
+                    show_log = False
+
+            # 3. Проверка на пинги
             if show_log and self.hide_health_checks:
-                is_ping = self.is_ping_message(log_entry)
-                # print(f"DEBUG: hide_health_checks={self.hide_health_checks}, is_ping={is_ping}, msg={log_entry[:80]}")
-                if is_ping:
+                if self.is_ping_message(log_entry):
                     show_log = False
 
             # Показываем лог, если прошел все фильтры
@@ -1328,7 +1353,7 @@ class MainWindow(QMainWindow):
                 item.setText(0, "ℹ️")
                 item.setText(1, "Нет загруженного проекта")
                 item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 7):
+                for i in range(2, 8):  # Колонки 2-7
                     item.setText(i, "")
                 return
 
@@ -1338,7 +1363,7 @@ class MainWindow(QMainWindow):
                 item.setText(0, "ℹ️")
                 item.setText(1, "Нет сервисов в проекте. Нажмите 'Добавить сервис'")
                 item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 7):
+                for i in range(2, 8):  # Колонки 2-7
                     item.setText(i, "")
                 return
 
@@ -1375,31 +1400,37 @@ class MainWindow(QMainWindow):
         item.setText(1, service_name)
         item.setFont(1, QFont("Arial", 10, QFont.Bold))
 
-        port = service.get("port", "-")
-        item.setText(2, str(port))
+        # Хост
+        host = service.get("host", "127.0.0.1")
+        item.setText(2, host)
         item.setTextAlignment(2, Qt.AlignCenter)
 
+        # Порт
+        port = service.get("port", "-")
+        item.setText(3, str(port))
+        item.setTextAlignment(3, Qt.AlignCenter)
+
+        # PID
         pid = "-"
         with self.process_lock:
             root_pid = self.service_root_pids.get(service_name)
             if root_pid:
                 pid = str(root_pid)
-        item.setText(3, pid)
-        item.setTextAlignment(3, Qt.AlignCenter)
+        item.setText(4, pid)
+        item.setTextAlignment(4, Qt.AlignCenter)
 
+        # Python
         python_path = service.get("python_path", "system")
         if python_path == "system":
             python_display = "🐍 system"
         else:
             python_display = f"🐍 {Path(python_path).name}"
-        item.setText(4, python_display)
-
-        deps = service.get("dependencies", [])
-        deps_text = ", ".join(deps) if deps else "-"
-        item.setText(5, deps_text)
+        item.setText(5, python_display)
+        item.setTextAlignment(5, Qt.AlignCenter)
 
         self.services_tree.addTopLevelItem(item)
 
+        # Действия (колонка 6)
         actions_widget = QWidget()
         actions_layout = QHBoxLayout(actions_widget)
         actions_layout.setContentsMargins(4, 2, 4, 2)
@@ -1432,6 +1463,12 @@ class MainWindow(QMainWindow):
         actions_layout.addStretch()
 
         self.services_tree.setItemWidget(item, 6, actions_widget)
+
+        # Комментарий (колонка 7)
+        comment = service.get("comment", "")
+        item.setText(7, comment)
+        item.setToolTip(7, comment)  # Показываем полный комментарий при наведении
+
         self.services_widgets[service_name] = item
 
     def start_monitoring(self):
@@ -2488,6 +2525,34 @@ class MainWindow(QMainWindow):
             # print("\n[DEBUG] Оставшихся процессов не найдено")
 
         self.cleanup_and_exit(event)
+
+    def on_custom_filter_changed(self, text):
+        """Обработка изменения текстового фильтра"""
+        self.custom_filter_text = text.strip()
+        self.apply_log_filter()
+
+    def clear_all_filters(self):
+        """Сброс всех фильтров (выпадающего списка и текстового)"""
+        # Сбрасываем выпадающий список
+        self.log_filter_combo.setCurrentIndex(0)
+        self.current_log_filter = None
+
+        # Очищаем текстовое поле
+        self.custom_filter_edit.clear()
+        self.custom_filter_text = ""
+
+        # Применяем фильтр (покажет все логи)
+        self.apply_log_filter()
+
+    def clear_log_filter(self):
+        """Сброс фильтра логов (оставляем для обратной совместимости)"""
+        self.clear_all_filters()
+
+    def on_log_filter_changed(self, index):
+        """Обработка изменения фильтра из выпадающего списка"""
+        if index >= 0:
+            self.current_log_filter = self.log_filter_combo.itemData(index)
+            self.apply_log_filter()
 
 
 def main():
