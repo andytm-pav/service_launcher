@@ -662,13 +662,16 @@ class MainWindow(QMainWindow):
         self.log_filters = set()   # Уникальные имена из квадратных скобок
         self.current_log_filter = None  # Текущий выбранный фильтр
         self.custom_filter_text = ""    # Текст кастомного фильтра
-
+        self.use_regexp = False         # Флаг использования регулярных выражений
+        self.compiled_regex = None      # Скомпилированное регулярное выражение
+    
         self.start_all_btn = QPushButton("Запустить все")
         self.stop_all_btn = QPushButton("Остановить все")
         self.restart_all_btn = QPushButton("Перезапустить все")
         self.project_combo = QComboBox()
         self.log_filter_combo = QComboBox()  # Выпадающий список для фильтрации логов
         self.custom_filter_edit = QLineEdit()  # Поле для кастомного фильтра
+        self.regexp_btn = QPushButton(".*")    # Кнопка переключения режима Regexp
         self.clear_filter_btn = QPushButton("Сбросить фильтр")  # Кнопка сброса фильтра
 
         self.menubar = self.menuBar()
@@ -676,7 +679,10 @@ class MainWindow(QMainWindow):
         self.setup_directories()
         self.setup_ui()
         self.setup_menu(self.menubar)
+        
+        # Загружаем список проектов
         self.load_projects_list()
+        
         self.start_monitoring()
 
     def lock_unlock(self, stage=1):
@@ -777,6 +783,7 @@ class MainWindow(QMainWindow):
         filter_label.setFont(QFont("Arial", 9, QFont.Bold))
         filter_layout.addWidget(filter_label)
         
+        # Выпадающий список фильтров
         self.log_filter_combo.setMinimumWidth(300)
         self.log_filter_combo.addItem("Все логи", None)  # Добавляем пункт "Все логи"
         self.log_filter_combo.currentIndexChanged.connect(self.on_log_filter_changed)
@@ -788,7 +795,28 @@ class MainWindow(QMainWindow):
         self.custom_filter_edit.setMinimumWidth(200)
         self.custom_filter_edit.textChanged.connect(self.on_custom_filter_changed)
         filter_layout.addWidget(self.custom_filter_edit)
-
+        
+        # Кнопка переключения режима Regexp
+        self.regexp_btn = QPushButton(".*")
+        self.regexp_btn.setFixedSize(32, 24)
+        self.regexp_btn.setCheckable(True)
+        self.regexp_btn.setToolTip("Режим регулярных выражений (выключен)")
+        self.regexp_btn.clicked.connect(self.on_regexp_mode_toggled)
+        self.regexp_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #4a9eff;
+                color: white;
+                border: 1px solid #3a7ecc;
+            }
+        """)
+        filter_layout.addWidget(self.regexp_btn)
+        
         # Кнопка сброса фильтра
         self.clear_filter_btn.clicked.connect(self.clear_all_filters)
         self.clear_filter_btn.setFixedWidth(120)
@@ -801,6 +829,7 @@ class MainWindow(QMainWindow):
 
         filter_layout.addStretch()
 
+        # Кнопка очистки лога
         self.clear_log_btn = QPushButton("Очистить лог")
         self.clear_log_btn.setFixedWidth(120)
         self.clear_log_btn.clicked.connect(self.clear_log)
@@ -1062,6 +1091,14 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def load_projects_list(self):
+        # import traceback
+        # print(f"\n=== load_project called from:")
+        # for line in traceback.format_stack()[:-1]:
+        #     print(line.strip())
+        # print(f"===\n")
+        # Временно блокируем сигналы, чтобы избежать лишних вызовов
+        self.project_combo.blockSignals(True)
+
         self.project_combo.clear()
 
         for file in PROJECTS_DIR.glob("*.json"):
@@ -1074,6 +1111,17 @@ class MainWindow(QMainWindow):
             except:
                 name = file.stem
                 self.project_combo.addItem(name, str(file))
+
+        # Разблокируем сигналы
+        self.project_combo.blockSignals(False)
+
+        # Если есть проекты, выбираем первый
+        if self.project_combo.count() > 0:
+            self.project_combo.setCurrentIndex(0)
+            # Явно загружаем первый проект
+            project_file = self.project_combo.itemData(0)
+            if project_file and Path(project_file).exists():
+                self.load_project(Path(project_file))
 
     def on_project_select(self, project_name):
         if not project_name:
@@ -1113,12 +1161,16 @@ class MainWindow(QMainWindow):
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(project_data, f, ensure_ascii=False, indent=2)
 
+        # Блокируем сигналы при обновлении комбобокса
+        self.project_combo.blockSignals(True)
         self.load_projects_list()
         self.project_combo.setCurrentText(name)
+        self.project_combo.blockSignals(False)
+
         self.current_project = filename
         self.project_data = project_data
         self.refresh_display()
-        self.log(f"[Service Launcher]{' '*(GAP-18)} Создан проект: {name}")
+        self.log(f"[Service Launcher]{' ' * (GAP - 18)} Создан проект: {name}")
 
     def open_project(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -1133,14 +1185,26 @@ class MainWindow(QMainWindow):
     def load_project(self, path):
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                self.project_data = json.load(f)
+                project_data = json.load(f)
 
             # Загружаем ping_filters, если их нет - создаем со значениями по умолчанию
-            if "ping_filters" not in self.project_data:
-                self.project_data["ping_filters"] = DEFAULT_CONFIG["ping_filters"].copy()
+            if "ping_filters" not in project_data:
+                project_data["ping_filters"] = DEFAULT_CONFIG["ping_filters"].copy()
 
+            # Проверяем, не тот же ли это проект, что уже загружен
+            if self.project_data:
+                # Сравниваем по имени и root_dir
+                if (self.project_data.get("name") == project_data.get("name") and
+                        self.project_data.get("root_dir") == project_data.get("root_dir")):
+                    # Проект уже загружен, не перезагружаем
+                    # print(f"[DEBUG] Проект {project_data.get('name')} уже загружен, пропускаем")
+                    return
+
+            self.project_data = project_data
             self.current_project = path
             self.refresh_display()
+
+            # Логируем только один раз
             self.log(f"[Service Launcher]{' ' * (GAP - 18)} Загружен проект: {self.project_data.get('name')}")
 
             if "root_dir" in self.project_data and self.project_data["root_dir"]:
@@ -1218,17 +1282,17 @@ class MainWindow(QMainWindow):
         else:
             self.log_filter_combo.setCurrentIndex(0)
 
-    def on_log_filter_changed(self, index):
-        """Обработка изменения фильтра логов"""
-        if index >= 0:
-            self.current_log_filter = self.log_filter_combo.itemData(index)
-            self.apply_log_filter()
+    # def on_log_filter_changed(self, index):
+    #     """Обработка изменения фильтра логов"""
+    #     if index >= 0:
+    #         self.current_log_filter = self.log_filter_combo.itemData(index)
+    #         self.apply_log_filter()
 
-    def clear_log_filter(self):
-        """Сброс фильтра логов"""
-        self.log_filter_combo.setCurrentIndex(0)
-        self.current_log_filter = None
-        self.apply_log_filter()
+    # def clear_log_filter(self):
+    #     """Сброс фильтра логов"""
+    #     self.log_filter_combo.setCurrentIndex(0)
+    #     self.current_log_filter = None
+    #     self.apply_log_filter()
 
     def apply_log_filter(self):
         """Применение комбинированного фильтра к отображаемым логам"""
@@ -1237,6 +1301,21 @@ class MainWindow(QMainWindow):
 
         # Очищаем виджет логов
         self.log_text.clear()
+
+        # Формируем сообщение о текущем фильтре
+        filter_info = []
+        if self.current_log_filter:
+            filter_info.append(f"сервис: {self.current_log_filter}")
+        if self.custom_filter_text:
+            filter_type = "regexp" if self.use_regexp else "текст"
+            filter_info.append(f"{filter_type}: '{self.custom_filter_text}'")
+        if self.hide_health_checks:
+            filter_info.append("без пингов")
+
+        # Если есть активные фильтры, показываем информационное сообщение
+        if filter_info:
+            info_msg = f"=== Применены фильтры: {', '.join(filter_info)} ==="
+            self.log_text.appendPlainText(info_msg)
 
         # Перебираем все сохраненные логи
         for log_entry in self.all_log_entries:
@@ -1248,10 +1327,9 @@ class MainWindow(QMainWindow):
                 if service_name != self.current_log_filter:
                     show_log = False
 
-            # 2. Проверка кастомного текстового фильтра
+            # 2. Проверка кастомного фильтра (текст или regexp)
             if show_log and self.custom_filter_text:
-                # Ищем текст в любом месте строки (без учета регистра)
-                if self.custom_filter_text.lower() not in log_entry.lower():
+                if not self.check_custom_filter(log_entry):
                     show_log = False
 
             # 3. Проверка на пинги
@@ -1316,10 +1394,9 @@ class MainWindow(QMainWindow):
                 if service_name != self.current_log_filter:
                     show_log = False
 
-            # 2. Проверка кастомного текстового фильтра
+            # 2. Проверка кастомного фильтра (текст или regexp)
             if show_log and self.custom_filter_text:
-                # Ищем текст в любом месте строки (без учета регистра)
-                if self.custom_filter_text.lower() not in log_entry.lower():
+                if not self.check_custom_filter(log_entry):
                     show_log = False
 
             # 3. Проверка на пинги
@@ -2526,23 +2603,23 @@ class MainWindow(QMainWindow):
 
         self.cleanup_and_exit(event)
 
-    def on_custom_filter_changed(self, text):
-        """Обработка изменения текстового фильтра"""
-        self.custom_filter_text = text.strip()
-        self.apply_log_filter()
+    # def on_custom_filter_changed(self, text):
+    #     """Обработка изменения текстового фильтра"""
+    #     self.custom_filter_text = text.strip()
+    #     self.apply_log_filter()
 
-    def clear_all_filters(self):
-        """Сброс всех фильтров (выпадающего списка и текстового)"""
-        # Сбрасываем выпадающий список
-        self.log_filter_combo.setCurrentIndex(0)
-        self.current_log_filter = None
-
-        # Очищаем текстовое поле
-        self.custom_filter_edit.clear()
-        self.custom_filter_text = ""
-
-        # Применяем фильтр (покажет все логи)
-        self.apply_log_filter()
+    # def clear_all_filters(self):
+    #     """Сброс всех фильтров (выпадающего списка и текстового)"""
+    #     # Сбрасываем выпадающий список
+    #     self.log_filter_combo.setCurrentIndex(0)
+    #     self.current_log_filter = None
+    #
+    #     # Очищаем текстовое поле
+    #     self.custom_filter_edit.clear()
+    #     self.custom_filter_text = ""
+    #
+    #     # Применяем фильтр (покажет все логи)
+    #     self.apply_log_filter()
 
     def clear_log_filter(self):
         """Сброс фильтра логов (оставляем для обратной совместимости)"""
@@ -2553,6 +2630,126 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.current_log_filter = self.log_filter_combo.itemData(index)
             self.apply_log_filter()
+
+    def on_regexp_mode_toggled(self, checked):
+        """Обработка переключения режима регулярных выражений"""
+        self.use_regexp = checked
+
+        # Обновляем подсказку
+        if checked:
+            self.regexp_btn.setToolTip("Режим регулярных выражений (включен)")
+            self.custom_filter_edit.setPlaceholderText("Regexp фильтр (например: error|warning|\\d+)...")
+        else:
+            self.regexp_btn.setToolTip("Режим регулярных выражений (выключен)")
+            self.custom_filter_edit.setPlaceholderText("Текстовый фильтр...")
+
+        # Перекомпилируем регулярное выражение и применяем фильтр
+        self.compile_regex()
+        self.apply_log_filter()
+
+    # def compile_regex(self):
+    #     """Компиляция регулярного выражения"""
+    #     self.compiled_regex = None
+    #
+    #     if self.use_regexp and self.custom_filter_text:
+    #         try:
+    #             self.compiled_regex = re.compile(self.custom_filter_text, re.IGNORECASE)
+    #             # Убираем красную подсветку если была ошибка
+    #             self.custom_filter_edit.setStyleSheet("")
+    #         except re.error as e:
+    #             # Подсвечиваем поле красным при ошибке regexp
+    #             self.custom_filter_edit.setStyleSheet("""
+    #                 QLineEdit {
+    #                     border: 1px solid red;
+    #                     background-color: #ffe6e6;
+    #                 }
+    #             """)
+    #             self.log(f"[Service Launcher]{' ' * (GAP - 18)} Ошибка регулярного выражения: {e}", "error")
+    #             self.compiled_regex = None
+
+    def on_custom_filter_changed(self, text):
+        """Обработка изменения текстового фильтра"""
+        self.custom_filter_text = text.strip()
+
+        # Если включен режим regexp, компилируем выражение
+        if self.use_regexp:
+            self.compile_regex()
+        else:
+            # Убираем красную подсветку
+            self.custom_filter_edit.setStyleSheet("")
+
+        self.apply_log_filter()
+
+    def compile_regex(self):
+        """Компиляция регулярного выражения"""
+        self.compiled_regex = None
+
+        if self.use_regexp and self.custom_filter_text:
+            try:
+                self.compiled_regex = re.compile(self.custom_filter_text, re.IGNORECASE)
+                # Убираем красную подсветку если была ошибка
+                self.custom_filter_edit.setStyleSheet("")
+
+                # Дополнительно: проверяем производительность regex
+                # Предупреждаем о потенциально "тяжелых" выражениях
+                if any(pattern in self.custom_filter_text for pattern in ['.*', '.+', '.*?', '.+?']):
+                    if len(self.custom_filter_text) > 10:
+                        self.log(
+                            f"[Service Launcher]{' ' * (GAP - 18)} ⚠️ Внимание: сложное регулярное выражение может замедлить фильтрацию",
+                            "warning")
+
+            except re.error as e:
+                # Подсвечиваем поле красным при ошибке regexp
+                self.custom_filter_edit.setStyleSheet("""
+                    QLineEdit {
+                        border: 1px solid red;
+                        background-color: #ffe6e6;
+                    }
+                    QLineEdit:focus {
+                        border: 2px solid red;
+                    }
+                """)
+                self.log(f"[Service Launcher]{' ' * (GAP - 18)} ❌ Ошибка регулярного выражения: {e}", "error")
+                self.compiled_regex = None
+
+    def clear_all_filters(self):
+        """Сброс всех фильтров (выпадающего списка, текстового и regexp)"""
+        # Сбрасываем выпадающий список
+        self.log_filter_combo.setCurrentIndex(0)
+        self.current_log_filter = None
+
+        # Очищаем текстовое поле
+        self.custom_filter_edit.clear()
+        self.custom_filter_text = ""
+
+        # Выключаем режим regexp
+        self.regexp_btn.setChecked(False)
+        self.use_regexp = False
+        self.compiled_regex = None
+        self.regexp_btn.setToolTip("Режим регулярных выражений (выключен)")
+        self.custom_filter_edit.setPlaceholderText("Текстовый фильтр...")
+
+        # Убираем красную подсветку
+        self.custom_filter_edit.setStyleSheet("")
+
+        # Применяем фильтр (покажет все логи)
+        self.apply_log_filter()
+
+    def check_custom_filter(self, text):
+        """Проверка соответствия текста кастомному фильтру"""
+        if not self.custom_filter_text:
+            return True
+
+        if self.use_regexp:
+            # Режим регулярных выражений
+            if self.compiled_regex:
+                return bool(self.compiled_regex.search(text))
+            else:
+                # Если regex не скомпилирован (ошибка), не показываем логи
+                return False
+        else:
+            # Обычный текстовый поиск
+            return self.custom_filter_text.lower() in text.lower()
 
 
 def main():
