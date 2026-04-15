@@ -670,9 +670,9 @@ class MainWindow(QMainWindow):
         self.use_regexp = False         # Флаг использования регулярных выражений
         self.compiled_regex = None      # Скомпилированное регулярное выражение
     
-        self.start_all_btn = QPushButton("Запустить все")
-        self.stop_all_btn = QPushButton("Остановить все")
-        self.restart_all_btn = QPushButton("Перезапустить все")
+        self.start_all_btn = QPushButton("▶️ Запустить все")
+        self.stop_all_btn = QPushButton("⏹️ Остановить все")
+        self.restart_all_btn = QPushButton("🔄 Перезапустить все")
         self.project_combo = QComboBox()
         self.log_filter_combo = QComboBox()  # Выпадающий список для фильтрации логов
         self.custom_filter_edit = QLineEdit()  # Поле для кастомного фильтра
