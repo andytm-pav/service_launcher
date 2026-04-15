@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QComboBox, QTreeWidget, QTreeWidgetItem,
     QDialog, QDialogButtonBox, QMessageBox, QFileDialog, QInputDialog,
     QLineEdit, QSpinBox, QCheckBox, QSplitter, QHeaderView,
-    QListWidget, QListWidgetItem, QFormLayout, QPlainTextEdit,
+    QListWidget, QListWidgetItem, QFormLayout, QPlainTextEdit, QSizePolicy,
     QMenuBar, QMenu
 )
 from PySide6.QtCore import (
@@ -303,7 +303,7 @@ class ServiceDialog(QDialog):
 
     def setup_ui(self):
         self.setWindowTitle("Редактирование сервиса" if self.service else "Новый сервис")
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(900)
         self.setMinimumHeight(600)  # Увеличиваем высоту для нового поля
 
         layout = QVBoxLayout()
@@ -331,6 +331,7 @@ class ServiceDialog(QDialog):
 
         script_browse = QPushButton("Обзор")
         script_browse.clicked.connect(self.browse_script)
+        # script_browse.setFixedWidth(80)  # Фиксируем ширину кнопки
         script_layout.addWidget(script_browse)
         form_layout.addRow("Путь к скрипту*:", script_layout)
 
@@ -338,6 +339,7 @@ class ServiceDialog(QDialog):
         python_layout = QHBoxLayout()
         self.python_combo = QComboBox()
         self.python_combo.setEditable(True)
+        self.python_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Разрешаем растягиваться
         self.python_combo.addItems(["system"] + self.find_python_interpreters())
         if self.service:
             self.python_combo.setCurrentText(self.service.get("python_path", "system"))
@@ -345,6 +347,7 @@ class ServiceDialog(QDialog):
 
         python_browse = QPushButton("Обзор")
         python_browse.clicked.connect(self.browse_python)
+        python_browse.setFixedWidth(80)  # Фиксируем ширину кнопки
         python_layout.addWidget(python_browse)
         form_layout.addRow("Python интерпретатор:", python_layout)
 
@@ -640,8 +643,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.hide_pings_checkbox = None
+        self.show_running_checkbox = None
         self.clear_log_btn = None
         self.hide_health_checks = False  # Флаг для скрытия health check логов
+        self.show_only_running = False
         self.process_info = {}  # pid -> service_name
         self.service_root_pids = {}  # service_name -> root_pid
         self.process_lock = threading.RLock()
@@ -907,6 +912,12 @@ class MainWindow(QMainWindow):
         refresh_btn = QPushButton("Обновить")
         refresh_btn.clicked.connect(self.refresh_display)
         layout.addWidget(refresh_btn)
+
+        # Чекбокс "Только рабочие процессы"
+        self.show_running_checkbox = QCheckBox("Только рабочие")
+        self.show_running_checkbox.setToolTip("Показывать только запущенные сервисы")
+        self.show_running_checkbox.stateChanged.connect(self.on_show_running_changed)
+        layout.addWidget(self.show_running_checkbox)
 
         layout.addStretch()
 
@@ -1444,10 +1455,44 @@ class MainWindow(QMainWindow):
                     item.setText(i, "")
                 return
 
+            # Сортируем сервисы по порядку
             services.sort(key=lambda x: x.get("order", 999))
 
+            # Счетчики для статистики
+            total_services = len(services)
+            shown_services = 0
+
             for service in services:
+                service_name = service.get("name", "Unknown")
+
+                # Проверяем, запущен ли сервис
+                with self.process_lock:
+                    is_running = service_name in self.service_root_pids
+
+                # Применяем фильтр "Только рабочие процессы"
+                if self.show_only_running and not is_running:
+                    continue
+
                 self.add_service_to_tree(service)
+                shown_services += 1
+
+            # Если после фильтрации нет сервисов, показываем сообщение
+            if shown_services == 0:
+                item = QTreeWidgetItem(self.services_tree)
+                item.setText(0, "ℹ️")
+                if self.show_only_running:
+                    item.setText(1, "Нет запущенных сервисов")
+                else:
+                    item.setText(1, "Нет сервисов для отображения")
+                item.setTextAlignment(1, Qt.AlignCenter)
+                for i in range(2, 8):
+                    item.setText(i, "")
+
+            # Обновляем статус бар
+            if self.show_only_running:
+                self.status_label.setText(f"Показано {shown_services} из {total_services} сервисов (только запущенные)")
+            else:
+                self.status_label.setText(f"Всего сервисов: {total_services}")
 
             self.services_tree.header().show()
         except Exception as e:
@@ -2750,6 +2795,11 @@ class MainWindow(QMainWindow):
         else:
             # Обычный текстовый поиск
             return self.custom_filter_text.lower() in text.lower()
+
+    def on_show_running_changed(self, state):
+        """Обработка изменения состояния чекбокса 'Только рабочие процессы'"""
+        self.show_only_running = self.show_running_checkbox.isChecked()
+        self.refresh_display()
 
 
 def main():
