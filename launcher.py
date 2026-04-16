@@ -922,7 +922,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(refresh_btn)
 
         # Чекбокс "Только рабочие процессы"
-        self.show_running_checkbox = QCheckBox("Только рабочие")
+        self.show_running_checkbox = QCheckBox("Только активные")
         self.show_running_checkbox.setToolTip("Показывать только запущенные сервисы")
         self.show_running_checkbox.stateChanged.connect(self.on_show_running_changed)
         layout.addWidget(self.show_running_checkbox)
