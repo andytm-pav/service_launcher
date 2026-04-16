@@ -21,6 +21,7 @@ import json
 import signal
 from os import terminal_size
 import re
+import webbrowser  # Добавляем импорт
 
 import psutil
 from pathlib import Path
@@ -734,6 +735,9 @@ class MainWindow(QMainWindow):
         self.services_tree.setAlternatingRowColors(True)
         self.services_tree.setSelectionBehavior(QTreeWidget.SelectRows)
 
+        self.services_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.services_tree.customContextMenuRequested.connect(self.show_service_context_menu)
+
         headers = ["Статус", "Сервис", "Хост", "Порт", "PID", "Python", "Действия", "Комментарий"]
         self.services_tree.setColumnCount(len(headers))
         self.services_tree.setHeaderLabels(headers)
@@ -746,8 +750,12 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Порт
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # PID
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Python
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Действия
+        header.setSectionResizeMode(6, QHeaderView.Fixed)  # Действия
         header.setSectionResizeMode(7, QHeaderView.Stretch)  # Комментарий (растягивается)
+
+        # Устанавливаем фиксированную ширину для колонки "Действия"
+        # 160 пикселей достаточно для 4-5 кнопок по 28px + отступы
+        header.resizeSection(6, 176)
 
         self.services_tree.setStyleSheet("""
             QTreeWidget {
@@ -1559,28 +1567,53 @@ class MainWindow(QMainWindow):
         actions_layout.setSpacing(4)
 
         start_btn = QPushButton("▶️")
-        start_btn.setFixedSize(32, 28)
+        start_btn.setFixedSize(28, 28)
         start_btn.setToolTip("Запустить")
         start_btn.clicked.connect(lambda checked, s=service: self.start_service(s))
         actions_layout.addWidget(start_btn)
 
         stop_btn = QPushButton("⏹️")
-        stop_btn.setFixedSize(32, 28)
+        stop_btn.setFixedSize(28, 28)
         stop_btn.setToolTip("Остановить")
         stop_btn.clicked.connect(lambda checked, s=service: self.stop_service(s))
         actions_layout.addWidget(stop_btn)
 
         restart_btn = QPushButton("🔄")
-        restart_btn.setFixedSize(32, 28)
+        restart_btn.setFixedSize(28, 28)
         restart_btn.setToolTip("Перезапустить")
         restart_btn.clicked.connect(lambda checked, s=service: self.restart_service(s))
         actions_layout.addWidget(restart_btn)
 
         edit_btn = QPushButton("⚙️")
-        edit_btn.setFixedSize(32, 28)
+        edit_btn.setFixedSize(28, 28)
         edit_btn.setToolTip("Редактировать")
         edit_btn.clicked.connect(lambda checked, s=service: self.edit_service_dialog(s))
         actions_layout.addWidget(edit_btn)
+
+        # Кнопка Swagger - показывается только если есть health_path
+        health_path = service.get("health_path", "").strip()
+        if health_path:
+            # Формируем URL для предпросмотра в тултипе
+            host = service.get("host", "127.0.0.1")
+            port = service.get("port", "")
+
+            if health_path.endswith("/health"):
+                swagger_path = health_path[:-7] + "/docs"
+            elif "/health" in health_path:
+                swagger_path = health_path.replace("/health", "/docs")
+            else:
+                swagger_path = "/docs"
+
+            if port:
+                doc_url_preview = f"http://{host}:{port}{swagger_path}"
+            else:
+                doc_url_preview = f"http://{host}{swagger_path} (порт не указан)"
+
+            swagger_btn = QPushButton("📊")
+            swagger_btn.setFixedSize(28, 28)
+            swagger_btn.setToolTip(f"Открыть Swagger документацию\n{doc_url_preview}")
+            swagger_btn.clicked.connect(lambda checked, s=service: self.open_swagger(s))
+            actions_layout.addWidget(swagger_btn)
 
         actions_layout.addStretch()
 
@@ -2800,6 +2833,121 @@ class MainWindow(QMainWindow):
         """Обработка изменения состояния чекбокса 'Только рабочие процессы'"""
         self.show_only_running = self.show_running_checkbox.isChecked()
         self.refresh_display()
+
+    def open_swagger(self, service):
+        """Открыть Swagger документацию в браузере"""
+        service_name = service.get("name")
+
+        # Проверяем, есть ли health_path
+        health_path = service.get("health_path", "").strip()
+        if not health_path:
+            self.log(
+                f"[{service_name}]{' ' * (GAP - 2 - len(service_name))} ⚠️ Health check path не указан, Swagger недоступен",
+                "warning")
+            return
+
+        # Получаем хост и порт
+        host = service.get("host", "127.0.0.1")
+        port = service.get("port")
+
+        if not port:
+            self.log(
+                f"[{service_name}]{' ' * (GAP - 2 - len(service_name))} ⚠️ Порт не указан, невозможно открыть Swagger",
+                "warning")
+            return
+
+        # Формируем URL для Swagger (заменяем /health на /docs)
+        # Например: /health -> /docs, /api/health -> /api/docs
+        if health_path.endswith("/health"):
+            swagger_path = health_path[:-7] + "/docs"  # убираем "health", добавляем "docs"
+        elif "/health" in health_path:
+            swagger_path = health_path.replace("/health", "/docs")
+        else:
+            # Если health_path не содержит /health, просто добавляем /docs к корню
+            swagger_path = "/docs"
+
+        swagger_url = f"http://{host}:{port}{swagger_path}"
+
+        # Проверяем, запущен ли сервис
+        if not self.is_service_running(service_name):
+            reply = QMessageBox.question(
+                self,
+                "Сервис не запущен",
+                f"Сервис {service_name} не запущен.\n\n"
+                f"Всё равно открыть {swagger_url} в браузере?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+        else:
+            # Проверяем доступность сервиса перед открытием
+            try:
+                # Пробуем подключиться к порту
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex((host, port))
+                sock.close()
+
+                if result != 0:
+                    reply = QMessageBox.question(
+                        self,
+                        "Порт недоступен",
+                        f"Порт {port} сервиса {service_name} недоступен.\n\n"
+                        f"Всё равно открыть {swagger_url} в браузере?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    if reply != QMessageBox.Yes:
+                        return
+            except:
+                pass
+
+        # Открываем в браузере
+        try:
+            import webbrowser
+            webbrowser.open(swagger_url)
+            self.log(
+                f"[{service_name}]{' ' * (GAP - 2 - len(service_name))} 📖 Открыта Swagger документация: {swagger_url}",
+                "info")
+        except Exception as e:
+            self.log(f"[{service_name}]{' ' * (GAP - 2 - len(service_name))} ❌ Ошибка открытия браузера: {e}", "error")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось открыть браузер:\n{swagger_url}\n\nОшибка: {e}")
+
+    def show_service_context_menu(self, position):
+        """Показать контекстное меню для сервиса"""
+        item = self.services_tree.itemAt(position)
+        if not item:
+            return
+
+        service_name = item.text(1)
+        service = self.find_service_by_name(service_name)
+        if not service:
+            return
+
+        menu = QMenu()
+
+        start_action = menu.addAction("▶️ Запустить")
+        start_action.triggered.connect(lambda: self.start_service(service))
+
+        stop_action = menu.addAction("⏹️ Остановить")
+        stop_action.triggered.connect(lambda: self.stop_service(service))
+
+        restart_action = menu.addAction("🔄 Перезапустить")
+        restart_action.triggered.connect(lambda: self.restart_service(service))
+
+        menu.addSeparator()
+
+        edit_action = menu.addAction("⚙️ Редактировать")
+        edit_action.triggered.connect(lambda: self.edit_service_dialog(service))
+
+        # Добавляем Swagger в контекстное меню если есть health_path
+        health_path = service.get("health_path", "").strip()
+        if health_path:
+            swagger_action = menu.addAction("📖 Открыть Swagger")
+            swagger_action.triggered.connect(lambda: self.open_swagger(service))
+
+        menu.exec(self.services_tree.viewport().mapToGlobal(position))
 
 
 def main():
