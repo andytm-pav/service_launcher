@@ -6,7 +6,7 @@
 # pyinstaller --windowed --onefile --name Service_launcher launcher.py
 
 """
-Universal Service Launcher - PySide6 Version
+FlowForge Service Launcher - PySide6 Version
 A powerful service processor for microservices and Python applications
 """
 
@@ -45,7 +45,7 @@ from PySide6.QtGui import (
 )
 
 # Configuration
-APP_NAME = "Universal Service Launcher"
+APP_NAME = "FlowForge Service Launcher"
 APP_VERSION = "0.4"
 # CONFIG_DIR = Path.home() / "./service_launcher/configurations"
 CONFIG_DIR = Path.cwd() / "configurations"
