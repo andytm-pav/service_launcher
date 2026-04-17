@@ -1664,7 +1664,7 @@ class MainWindow(QMainWindow):
         else:
             deps_text = "-"
         item.setText(6, deps_text)
-        item.setTextAlignment(6, Qt.AlignLeft)
+        item.setTextAlignment(6, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.services_tree.addTopLevelItem(item)
 
