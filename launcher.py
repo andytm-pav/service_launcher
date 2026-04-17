@@ -738,7 +738,7 @@ class MainWindow(QMainWindow):
         self.services_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.services_tree.customContextMenuRequested.connect(self.show_service_context_menu)
 
-        headers = ["Статус", "Сервис", "Хост", "Порт", "PID", "Python", "Действия", "Комментарий"]
+        headers = ["Статус", "Сервис", "Хост", "Порт", "PID", "Python", "Зависимости", "Действия", "Комментарий"]
         self.services_tree.setColumnCount(len(headers))
         self.services_tree.setHeaderLabels(headers)
 
@@ -750,12 +750,12 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Порт
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # PID
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Python
-        header.setSectionResizeMode(6, QHeaderView.Fixed)  # Действия
-        header.setSectionResizeMode(7, QHeaderView.Stretch)  # Комментарий (растягивается)
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Зависимости
+        header.setSectionResizeMode(7, QHeaderView.Fixed)  # Действия
+        header.setSectionResizeMode(8, QHeaderView.Stretch)  # Комментарий (растягивается)
 
         # Устанавливаем фиксированную ширину для колонки "Действия"
-        # 160 пикселей достаточно для 4-5 кнопок по 28px + отступы
-        header.resizeSection(6, 176)
+        header.resizeSection(7, 176)
 
         self.services_tree.setStyleSheet("""
             QTreeWidget {
@@ -1449,7 +1449,7 @@ class MainWindow(QMainWindow):
                 item.setText(0, "ℹ️")
                 item.setText(1, "Нет загруженного проекта")
                 item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 8):  # Колонки 2-7
+                for i in range(2, 8):
                     item.setText(i, "")
                 return
 
@@ -1459,7 +1459,7 @@ class MainWindow(QMainWindow):
                 item.setText(0, "ℹ️")
                 item.setText(1, "Нет сервисов в проекте. Нажмите 'Добавить сервис'")
                 item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 8):  # Колонки 2-7
+                for i in range(2, 9):
                     item.setText(i, "")
                 return
 
@@ -1558,9 +1558,18 @@ class MainWindow(QMainWindow):
         item.setText(5, python_display)
         item.setTextAlignment(5, Qt.AlignCenter)
 
+        # Зависимости (колонка 6)
+        deps = service.get("dependencies", [])
+        if deps:
+            deps_text = ", ".join(deps)
+        else:
+            deps_text = "-"
+        item.setText(6, deps_text)
+        item.setTextAlignment(6, Qt.AlignLeft)
+
         self.services_tree.addTopLevelItem(item)
 
-        # Действия (колонка 6)
+        # Действия (колонка 7) - было 6
         actions_widget = QWidget()
         actions_layout = QHBoxLayout(actions_widget)
         actions_layout.setContentsMargins(4, 2, 4, 2)
@@ -1617,12 +1626,12 @@ class MainWindow(QMainWindow):
 
         actions_layout.addStretch()
 
-        self.services_tree.setItemWidget(item, 6, actions_widget)
+        self.services_tree.setItemWidget(item, 7, actions_widget)
 
-        # Комментарий (колонка 7)
+        # Комментарий (колонка 8) - было 7
         comment = service.get("comment", "")
-        item.setText(7, comment)
-        item.setToolTip(7, comment)  # Показываем полный комментарий при наведении
+        item.setText(8, comment)
+        item.setToolTip(8, comment)
 
         self.services_widgets[service_name] = item
 
