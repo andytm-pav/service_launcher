@@ -46,7 +46,7 @@ from PySide6.QtGui import (
 
 # Configuration
 APP_NAME = "FlowForge Service Launcher"
-APP_VERSION = "0.4"
+APP_VERSION = "0.5"
 # CONFIG_DIR = Path.home() / "./service_launcher/configurations"
 CONFIG_DIR = Path.cwd() / "configurations"
 PROJECTS_DIR = CONFIG_DIR / "projects"
