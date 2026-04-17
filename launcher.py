@@ -662,6 +662,7 @@ class MainWindow(QMainWindow):
         self.monitor_stop_event = threading.Event()
         self._is_closing = False
         self._closing_started = False
+        self.selected_services_filter = set()  # Множество выбранных сервисов
 
         # Хранилище для логов
         self.all_log_entries = []  # Список всех логов (каждый элемент - строка)
@@ -690,6 +691,70 @@ class MainWindow(QMainWindow):
         self.load_projects_list()
         
         self.start_monitoring()
+
+    # Добавьте методы:
+    def show_service_filter_menu(self):
+        """Показать меню выбора сервисов"""
+        menu = QMenu(self)
+
+        # Пункт "Все"
+        all_action = menu.addAction("✓ Все" if not self.selected_services_filter else "Все")
+        all_action.setCheckable(True)
+        all_action.setChecked(not self.selected_services_filter)
+        all_action.triggered.connect(lambda: self.toggle_all_services_filter())
+
+        menu.addSeparator()
+
+        # Список сервисов
+        if self.project_data:
+            services = self.project_data.get("services", [])
+            for service in services:
+                service_name = service.get("name", "")
+                if service_name:
+                    action = menu.addAction(service_name)
+                    action.setCheckable(True)
+                    action.setChecked(service_name in self.selected_services_filter)
+                    action.triggered.connect(
+                        lambda checked, name=service_name: self.toggle_service_filter(name, checked))
+
+        # Показываем меню под кнопкой
+        menu.exec(self.service_filter_button.mapToGlobal(self.service_filter_button.rect().bottomLeft()))
+
+    def toggle_all_services_filter(self):
+        """Переключение режима 'Все сервисы'"""
+        if not self.selected_services_filter:
+            # Уже выбраны все, ничего не делаем
+            return
+
+        self.selected_services_filter.clear()
+        self.update_service_filter_button_text()
+        self.refresh_display()
+
+    def toggle_service_filter(self, service_name, checked):
+        """Переключение фильтра для конкретного сервиса"""
+        if checked:
+            self.selected_services_filter.add(service_name)
+        else:
+            self.selected_services_filter.discard(service_name)
+
+        self.update_service_filter_button_text()
+        self.refresh_display()
+
+    def update_service_filter_button_text(self):
+        """Обновление текста на кнопке фильтра"""
+        if not self.selected_services_filter:
+            self.service_filter_button.setText("Все сервисы ▼")
+        elif len(self.selected_services_filter) == 1:
+            service_name = list(self.selected_services_filter)[0]
+            self.service_filter_button.setText(f"{service_name} ▼")
+        else:
+            self.service_filter_button.setText(f"Выбрано: {len(self.selected_services_filter)} ▼")
+
+    def update_service_filter_menu(self):
+        """Вызывается при изменении списка сервисов (не требует действий, меню создается динамически)"""
+        # Сбрасываем фильтр при изменении проекта
+        self.selected_services_filter.clear()
+        self.update_service_filter_button_text()
 
     def lock_unlock(self, stage=1):
         if stage == 1:
@@ -921,7 +986,15 @@ class MainWindow(QMainWindow):
         refresh_btn.clicked.connect(self.refresh_display)
         layout.addWidget(refresh_btn)
 
-        # Чекбокс "Только рабочие процессы"
+        # Кастомный фильтр сервисов
+        # layout.addWidget(QLabel("Фильтр сервисов:"))
+        self.service_filter_button = QPushButton("Все сервисы ▼")
+        self.service_filter_button.setMinimumWidth(150)
+        self.service_filter_button.setToolTip("Нажмите для выбора сервисов")
+        self.service_filter_button.clicked.connect(self.show_service_filter_menu)
+        layout.addWidget(self.service_filter_button)
+
+        # Чекбокс "Только активные"
         self.show_running_checkbox = QCheckBox("Только активные")
         self.show_running_checkbox.setToolTip("Показывать только запущенные сервисы")
         self.show_running_checkbox.stateChanged.connect(self.on_show_running_changed)
@@ -1206,24 +1279,23 @@ class MainWindow(QMainWindow):
             with open(path, 'r', encoding='utf-8') as f:
                 project_data = json.load(f)
 
-            # Загружаем ping_filters, если их нет - создаем со значениями по умолчанию
             if "ping_filters" not in project_data:
                 project_data["ping_filters"] = DEFAULT_CONFIG["ping_filters"].copy()
 
-            # Проверяем, не тот же ли это проект, что уже загружен
             if self.project_data:
-                # Сравниваем по имени и root_dir
                 if (self.project_data.get("name") == project_data.get("name") and
                         self.project_data.get("root_dir") == project_data.get("root_dir")):
-                    # Проект уже загружен, не перезагружаем
-                    # print(f"[DEBUG] Проект {project_data.get('name')} уже загружен, пропускаем")
                     return
 
             self.project_data = project_data
             self.current_project = path
+
+            # Сбрасываем фильтр сервисов при загрузке нового проекта
+            self.selected_services_filter.clear()
+            self.update_service_filter_button_text()
+
             self.refresh_display()
 
-            # Логируем только один раз
             self.log(f"[Service Launcher]{' ' * (GAP - 18)} Загружен проект: {self.project_data.get('name')}")
 
             if "root_dir" in self.project_data and self.project_data["root_dir"]:
@@ -1449,7 +1521,7 @@ class MainWindow(QMainWindow):
                 item.setText(0, "ℹ️")
                 item.setText(1, "Нет загруженного проекта")
                 item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 8):
+                for i in range(2, 9):
                     item.setText(i, "")
                 return
 
@@ -1473,6 +1545,10 @@ class MainWindow(QMainWindow):
             for service in services:
                 service_name = service.get("name", "Unknown")
 
+                # Применяем фильтр по выбранным сервисам
+                if self.selected_services_filter and service_name not in self.selected_services_filter:
+                    continue
+
                 # Проверяем, запущен ли сервис
                 with self.process_lock:
                     is_running = service_name in self.service_root_pids
@@ -1488,19 +1564,32 @@ class MainWindow(QMainWindow):
             if shown_services == 0:
                 item = QTreeWidgetItem(self.services_tree)
                 item.setText(0, "ℹ️")
-                if self.show_only_running:
+                if self.show_only_running and self.selected_services_filter:
+                    item.setText(1, "Нет запущенных сервисов среди выбранных")
+                elif self.show_only_running:
                     item.setText(1, "Нет запущенных сервисов")
+                elif self.selected_services_filter:
+                    item.setText(1, "Выбранные сервисы не найдены")
                 else:
                     item.setText(1, "Нет сервисов для отображения")
                 item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 8):
+                for i in range(2, 9):
                     item.setText(i, "")
 
             # Обновляем статус бар
+            filter_info = []
             if self.show_only_running:
-                self.status_label.setText(f"Показано {shown_services} из {total_services} сервисов (только запущенные)")
-            else:
-                self.status_label.setText(f"Всего сервисов: {total_services}")
+                filter_info.append("только активные")
+            if self.selected_services_filter:
+                if len(self.selected_services_filter) == 1:
+                    filter_info.append(f"сервис: {list(self.selected_services_filter)[0]}")
+                else:
+                    filter_info.append(f"сервисов: {len(self.selected_services_filter)}")
+
+            status_text = f"Показано {shown_services} из {total_services} сервисов"
+            if filter_info:
+                status_text += f" ({', '.join(filter_info)})"
+            self.status_label.setText(status_text)
 
             self.services_tree.header().show()
         except Exception as e:
