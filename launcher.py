@@ -2356,9 +2356,9 @@ class MainWindow(QMainWindow):
                 services.append(service_data)
 
             self.project_data["services"] = services
+            self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис {'обновлен' if service else 'добавлен'}: {service_data['name']}")
             self.save_project()
             self.refresh_display()
-            self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис {'обновлен' if service else 'добавлен'}: {service_data['name']}")
 
     def delete_service(self):
         current = self.services_tree.currentItem()
