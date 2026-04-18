@@ -815,24 +815,25 @@ class MainWindow(QMainWindow):
         self.services_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.services_tree.customContextMenuRequested.connect(self.show_service_context_menu)
 
-        headers = ["Статус", "Сервис", "Хост", "Порт", "PID", "Python", "Зависимости", "Действия", "Комментарий"]
+        headers = ["Статус", "Порядок", "Сервис", "Хост", "Порт", "PID", "Python", "Зависимости", "Действия", "Комментарий"]
         self.services_tree.setColumnCount(len(headers))
         self.services_tree.setHeaderLabels(headers)
 
         header = self.services_tree.header()
         header.setStretchLastSection(True)  # Последняя колонка (Комментарий) будет растягиваться
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Статус
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Сервис
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Хост
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Порт
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # PID
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Python
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Зависимости
-        header.setSectionResizeMode(7, QHeaderView.Fixed)  # Действия
-        header.setSectionResizeMode(8, QHeaderView.Stretch)  # Комментарий (растягивается)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Порядок
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Сервис
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Хост
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Порт
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # PID
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Python
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Зависимости
+        header.setSectionResizeMode(8, QHeaderView.Fixed)  # Действия
+        header.setSectionResizeMode(9, QHeaderView.Stretch)  # Комментарий (растягивается)
 
         # Устанавливаем фиксированную ширину для колонки "Действия"
-        header.resizeSection(7, 176)
+        header.resizeSection(8, 176)
 
         self.services_tree.setStyleSheet("""
             QTreeWidget {
@@ -1531,9 +1532,9 @@ class MainWindow(QMainWindow):
             if not self.project_data:
                 item = QTreeWidgetItem(self.services_tree)
                 item.setText(0, "ℹ️")
-                item.setText(1, "Нет загруженного проекта")
-                item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 9):
+                item.setText(2, "Нет загруженного проекта")
+                item.setTextAlignment(2, Qt.AlignCenter)
+                for i in range(2, 10):
                     item.setText(i, "")
                 return
 
@@ -1541,9 +1542,9 @@ class MainWindow(QMainWindow):
             if not services:
                 item = QTreeWidgetItem(self.services_tree)
                 item.setText(0, "ℹ️")
-                item.setText(1, "Нет сервисов в проекте. Нажмите 'Добавить сервис'")
-                item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 9):
+                item.setText(2, "Нет сервисов в проекте. Нажмите 'Добавить сервис'")
+                item.setTextAlignment(2, Qt.AlignCenter)
+                for i in range(2, 10):
                     item.setText(i, "")
                 return
 
@@ -1577,15 +1578,15 @@ class MainWindow(QMainWindow):
                 item = QTreeWidgetItem(self.services_tree)
                 item.setText(0, "ℹ️")
                 if self.show_only_running and self.selected_services_filter:
-                    item.setText(1, "Нет запущенных сервисов среди выбранных")
+                    item.setText(2, "Нет запущенных сервисов среди выбранных")
                 elif self.show_only_running:
-                    item.setText(1, "Нет запущенных сервисов")
+                    item.setText(2, "Нет запущенных сервисов")
                 elif self.selected_services_filter:
-                    item.setText(1, "Выбранные сервисы не найдены")
+                    item.setText(2, "Выбранные сервисы не найдены")
                 else:
-                    item.setText(1, "Нет сервисов для отображения")
-                item.setTextAlignment(1, Qt.AlignCenter)
-                for i in range(2, 9):
+                    item.setText(2, "Нет сервисов для отображения")
+                item.setTextAlignment(2, Qt.AlignCenter)
+                for i in range(2, 10):
                     item.setText(i, "")
 
             # Обновляем статус бар
@@ -1628,49 +1629,55 @@ class MainWindow(QMainWindow):
         item.setForeground(0, QColor(COLORS["running"] if is_running else COLORS["stopped"]))
         item.setTextAlignment(0, Qt.AlignCenter)
 
-        item.setText(1, service_name)
-        item.setFont(1, QFont("Arial", 10, QFont.Bold))
+        # Порядок запуска (колонка 1)
+        order = service.get("order", 999)
+        item.setText(1, str(order))
+        item.setTextAlignment(1, Qt.AlignCenter)
 
-        # Хост
+        # Сервис (колонка 2)
+        item.setText(2, service_name)
+        item.setFont(2, QFont("Arial", 10, QFont.Bold))
+
+        # Хост (колонка 3)
         host = service.get("host", "127.0.0.1")
-        item.setText(2, host)
-        item.setTextAlignment(2, Qt.AlignCenter)
-
-        # Порт
-        port = service.get("port", "-")
-        item.setText(3, str(port))
+        item.setText(3, host)
         item.setTextAlignment(3, Qt.AlignCenter)
 
-        # PID
+        # Порт (колонка 4)
+        port = service.get("port", "-")
+        item.setText(4, str(port))
+        item.setTextAlignment(4, Qt.AlignCenter)
+
+        # PID (колонка 5)
         pid = "-"
         with self.process_lock:
             root_pid = self.service_root_pids.get(service_name)
             if root_pid:
                 pid = str(root_pid)
-        item.setText(4, pid)
-        item.setTextAlignment(4, Qt.AlignCenter)
+        item.setText(5, pid)
+        item.setTextAlignment(5, Qt.AlignCenter)
 
-        # Python
+        # Python (колонка 6)
         python_path = service.get("python_path", "system")
         if python_path == "system":
             python_display = "🐍 system"
         else:
             python_display = f"🐍 {Path(python_path).name}"
-        item.setText(5, python_display)
-        item.setTextAlignment(5, Qt.AlignCenter)
+        item.setText(6, python_display)
+        item.setTextAlignment(6, Qt.AlignCenter)
 
-        # Зависимости (колонка 6)
+        # Зависимости (колонка 7)
         deps = service.get("dependencies", [])
         if deps:
             deps_text = ", ".join(deps)
         else:
             deps_text = "-"
-        item.setText(6, deps_text)
-        item.setTextAlignment(6, Qt.AlignLeft | Qt.AlignVCenter)
+        item.setText(7, deps_text)
+        item.setTextAlignment(7, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.services_tree.addTopLevelItem(item)
 
-        # Действия (колонка 7) - было 6
+        # Действия (колонка 8)
         actions_widget = QWidget()
         actions_layout = QHBoxLayout(actions_widget)
         actions_layout.setContentsMargins(4, 2, 4, 2)
@@ -1727,12 +1734,12 @@ class MainWindow(QMainWindow):
 
         actions_layout.addStretch()
 
-        self.services_tree.setItemWidget(item, 7, actions_widget)
+        self.services_tree.setItemWidget(item, 8, actions_widget)
 
-        # Комментарий (колонка 8) - было 7
+        # Комментарий (колонка 9)
         comment = service.get("comment", "")
-        item.setText(8, comment)
-        item.setToolTip(8, comment)
+        item.setText(9, comment)
+        item.setToolTip(9, comment)
 
         self.services_widgets[service_name] = item
 
