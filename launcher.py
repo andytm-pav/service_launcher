@@ -815,25 +815,26 @@ class MainWindow(QMainWindow):
         self.services_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.services_tree.customContextMenuRequested.connect(self.show_service_context_menu)
 
-        headers = ["Статус", "Порядок", "Сервис", "Хост", "Порт", "PID", "Python", "Зависимости", "Действия", "Комментарий"]
+        headers = ["Статус", "Тип", "Порядок", "Сервис", "Хост", "Порт", "PID", "Python", "Зависимости", "Действия", "Комментарий"]
         self.services_tree.setColumnCount(len(headers))
         self.services_tree.setHeaderLabels(headers)
 
         header = self.services_tree.header()
         header.setStretchLastSection(True)  # Последняя колонка (Комментарий) будет растягиваться
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Статус
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Порядок
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Сервис
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Хост
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Порт
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # PID
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Python
-        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Зависимости
-        header.setSectionResizeMode(8, QHeaderView.Fixed)  # Действия
-        header.setSectionResizeMode(9, QHeaderView.Stretch)  # Комментарий (растягивается)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Тип
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Порядок
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Сервис
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Хост
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Порт
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # PID
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Python
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Зависимости
+        header.setSectionResizeMode(9, QHeaderView.Fixed)  # Действия
+        header.setSectionResizeMode(10, QHeaderView.Stretch)  # Комментарий (растягивается)
 
         # Устанавливаем фиксированную ширину для колонки "Действия"
-        header.resizeSection(8, 176)
+        header.resizeSection(9, 176)
 
         self.services_tree.setStyleSheet("""
             QTreeWidget {
@@ -917,6 +918,11 @@ class MainWindow(QMainWindow):
         self.hide_pings_checkbox = QCheckBox("Убрать пинги")
         self.hide_pings_checkbox.stateChanged.connect(self.on_hide_pings_changed)
         filter_layout.addWidget(self.hide_pings_checkbox)
+
+        self.edit_ping_filters_btn = QPushButton("Настроить фильтр пингов")
+        self.edit_ping_filters_btn.clicked.connect(self.edit_ping_filters)
+        self.edit_ping_filters_btn.setFixedWidth(160)
+        filter_layout.addWidget(self.edit_ping_filters_btn)
 
         filter_layout.addStretch()
 
@@ -1175,10 +1181,9 @@ class MainWindow(QMainWindow):
         project_settings_action.triggered.connect(self.project_settings)
         settings_menu.addAction(project_settings_action)
 
-        # Новый пункт меню
-        ping_filters_action = QAction("Настройка фильтров пингов", self)
-        ping_filters_action.triggered.connect(self.edit_ping_filters)
-        settings_menu.addAction(ping_filters_action)
+        # ping_filters_action = QAction("Настройка фильтров пингов", self)
+        # ping_filters_action.triggered.connect(self.edit_ping_filters)
+        # settings_menu.addAction(ping_filters_action)
 
         global_settings_action = QAction("Глобальные настройки", self)
         global_settings_action.triggered.connect(self.global_settings)
@@ -1619,65 +1624,75 @@ class MainWindow(QMainWindow):
 
         item = QTreeWidgetItem()
         font = QFont()
+        
+        # Колонка 0: Статус (только индикатор)
+        status_text = "●" if is_running else "○"
         if is_running:
-            item.setText(0, "●")
             font.setPointSize(20)
         else:
-            item.setText(0, "○")
             font.setPointSize(12)
+        
+        item.setText(0, status_text)
         item.setFont(0, font)
         item.setForeground(0, QColor(COLORS["running"] if is_running else COLORS["stopped"]))
         item.setTextAlignment(0, Qt.AlignCenter)
 
-        # Порядок запуска (колонка 1)
+        # Колонка 1: Тип (значение поля "service" из health check)
+        service_type = ""
+        if is_running:
+            service_type = self.get_service_info_from_health(service) or ""
+        item.setText(1, service_type)
+        item.setTextAlignment(1, Qt.AlignLeft | Qt.AlignVCenter)
+
+        # Колонка 2: Порядок запуска
         order = service.get("order", 999)
-        item.setText(1, str(order))
-        item.setTextAlignment(1, Qt.AlignCenter)
+        item.setText(2, str(order))
+        item.setTextAlignment(2, Qt.AlignCenter)
 
-        # Сервис (колонка 2)
-        item.setText(2, service_name)
-        item.setFont(2, QFont("Arial", 10, QFont.Bold))
+        # Колонка 3: Сервис
+        item.setText(3, service_name)
+        item.setFont(3, QFont("Arial", 10, QFont.Bold))
 
-        # Хост (колонка 3)
+        # Колонка 4: Хост
         host = service.get("host", "127.0.0.1")
-        item.setText(3, host)
-        item.setTextAlignment(3, Qt.AlignCenter)
-
-        # Порт (колонка 4)
-        port = service.get("port", "-")
-        item.setText(4, str(port))
+        item.setText(4, host)
         item.setTextAlignment(4, Qt.AlignCenter)
 
-        # PID (колонка 5)
+        # Колонка 5: Порт
+        port = service.get("port", "-")
+        item.setText(5, str(port))
+        item.setTextAlignment(5, Qt.AlignCenter)
+
+        # Колонка 6: PID
         pid = "-"
         with self.process_lock:
             root_pid = self.service_root_pids.get(service_name)
             if root_pid:
                 pid = str(root_pid)
-        item.setText(5, pid)
-        item.setTextAlignment(5, Qt.AlignCenter)
+        item.setText(6, pid)
+        item.setTextAlignment(6, Qt.AlignCenter)
 
-        # Python (колонка 6)
+        # Колонка 7: Python
         python_path = service.get("python_path", "system")
         if python_path == "system":
             python_display = "🐍 system"
         else:
             python_display = f"🐍 {Path(python_path).name}"
-        item.setText(6, python_display)
-        item.setTextAlignment(6, Qt.AlignCenter)
+        item.setText(7, python_display)
+        item.setTextAlignment(7, Qt.AlignCenter)
 
-        # Зависимости (колонка 7)
+        # Колонка 8: Зависимости
         deps = service.get("dependencies", [])
         if deps:
             deps_text = ", ".join(deps)
         else:
             deps_text = "-"
-        item.setText(7, deps_text)
-        item.setTextAlignment(7, Qt.AlignLeft | Qt.AlignVCenter)
+        item.setText(8, deps_text)
+        item.setTextAlignment(8, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.services_tree.addTopLevelItem(item)
 
-        # Действия (колонка 8)
+        # Колонка 9: Действия
         actions_widget = QWidget()
         actions_layout = QHBoxLayout(actions_widget)
         actions_layout.setContentsMargins(4, 2, 4, 2)
@@ -1734,12 +1749,12 @@ class MainWindow(QMainWindow):
 
         actions_layout.addStretch()
 
-        self.services_tree.setItemWidget(item, 8, actions_widget)
+        self.services_tree.setItemWidget(item, 9, actions_widget)
 
-        # Комментарий (колонка 9)
+        # Колонка 10: Комментарий
         comment = service.get("comment", "")
-        item.setText(9, comment)
-        item.setToolTip(9, comment)
+        item.setText(10, comment)
+        item.setToolTip(10, comment)
 
         self.services_widgets[service_name] = item
 
@@ -1775,6 +1790,9 @@ class MainWindow(QMainWindow):
                         for service_name in dead_services:
                             self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} 💀 Сервис {service_name} завершился", "warning")
                         QTimer.singleShot(0, self.refresh_display)
+                else:
+                    # Периодически обновляем отображение для обновления service info
+                    QTimer.singleShot(0, self.refresh_display)
 
         self.monitor_stop_event.clear()
         self.monitor_thread = threading.Thread(target=monitor, daemon=True)
@@ -2322,7 +2340,7 @@ class MainWindow(QMainWindow):
     def edit_service(self):
         current = self.services_tree.currentItem()
         if current:
-            service_name = current.text(1)
+            service_name = current.text(3)  # Изменено с 1 на 3 (колонка "Сервис")
             service = self.find_service_by_name(service_name)
             if service:
                 self.edit_service_dialog(service)
@@ -2365,7 +2383,7 @@ class MainWindow(QMainWindow):
         if not current:
             return
 
-        service_name = current.text(1)
+        service_name = current.text(3)  # Изменено с 1 на 3 (колонка "Сервис")
         reply = QMessageBox.question(
             self,
             "Подтверждение",
@@ -3037,7 +3055,7 @@ class MainWindow(QMainWindow):
         if not item:
             return
 
-        service_name = item.text(1)
+        service_name = item.text(3)  # Изменено с 1 на 3 (колонка "Сервис")
         service = self.find_service_by_name(service_name)
         if not service:
             return
@@ -3065,6 +3083,29 @@ class MainWindow(QMainWindow):
             swagger_action.triggered.connect(lambda: self.open_swagger(service))
 
         menu.exec(self.services_tree.viewport().mapToGlobal(position))
+
+    def get_service_info_from_health(self, service):
+        """Получить значение поля 'service' из health check"""
+        try:
+            host = service.get("host", "127.0.0.1")
+            port = service.get("port")
+            health_path = service.get("health_path", "/health")
+
+            if not port:
+                return None
+
+            url = f"http://{host}:{port}{health_path}"
+            response = requests.get(url, timeout=1)
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    return data.get("service")
+                except:
+                    pass
+        except:
+            pass
+        return None
 
 
 def main():
