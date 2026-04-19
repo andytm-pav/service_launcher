@@ -914,6 +914,8 @@ class MainWindow(QMainWindow):
         self.clear_filter_btn.setFixedWidth(120)
         filter_layout.addWidget(self.clear_filter_btn)
 
+        filter_layout.addWidget(QLabel(" "*5))
+
         # Чекбокс для скрытия пингов
         self.hide_pings_checkbox = QCheckBox("Убрать пинги")
         self.hide_pings_checkbox.stateChanged.connect(self.on_hide_pings_changed)
