@@ -439,15 +439,6 @@ class ServiceDialog(QDialog):
 
         self.setLayout(layout)
 
-    # def browse_working_dir(self):
-    #     directory = QFileDialog.getExistingDirectory(
-    #         self,
-    #         "Выберите рабочую директорию",
-    #         str(self.root_dir)
-    #     )
-    #     if directory:
-    #         self.working_dir_edit.setText(directory)
-
     def browse_working_dir(self):
         # Получаем текущую директорию из поля ввода
         current_dir = self.working_dir_edit.text()
@@ -485,16 +476,6 @@ class ServiceDialog(QDialog):
 
         return interpreters
 
-    # def browse_script(self):
-    #     filename, _ = QFileDialog.getOpenFileName(
-    #         self,
-    #         "Выберите скрипт",
-    #         str(self.root_dir),
-    #         "Python files (*.py);;All files (*.*)"
-    #     )
-    #     if filename:
-    #         self.script_edit.setText(filename)
-
     def browse_script(self):
         # Получаем текущий путь из поля ввода
         current_script = self.script_edit.text()
@@ -516,16 +497,6 @@ class ServiceDialog(QDialog):
 
         if filename:
             self.script_edit.setText(filename)
-
-    # def browse_python(self):
-    #     filename, _ = QFileDialog.getOpenFileName(
-    #         self,
-    #         "Выберите Python интерпретатор",
-    #         str(self.root_dir),
-    #         "Python executable (python*);;All files (*.*)"
-    #     )
-    #     if filename:
-    #         self.python_combo.setCurrentText(filename)
 
     def browse_python(self):
         # Получаем текущий путь из комбобокса
@@ -1176,6 +1147,16 @@ class MainWindow(QMainWindow):
         import_service_action.triggered.connect(self.import_service)
         services_menu.addAction(import_service_action)
 
+        export_service_action = QAction("Экспорт сервиса", self)
+        export_service_action.triggered.connect(self.export_service)
+        services_menu.addAction(export_service_action)
+
+        services_menu.addSeparator()
+
+        reorder_action = QAction("Упорядочить", self)
+        reorder_action.triggered.connect(self.reorder_services)
+        services_menu.addAction(reorder_action)
+
         # Settings menu
         settings_menu = menubar.addMenu("Настройки")
 
@@ -1392,18 +1373,6 @@ class MainWindow(QMainWindow):
                 self.log_filter_combo.setCurrentIndex(0)
         else:
             self.log_filter_combo.setCurrentIndex(0)
-
-    # def on_log_filter_changed(self, index):
-    #     """Обработка изменения фильтра логов"""
-    #     if index >= 0:
-    #         self.current_log_filter = self.log_filter_combo.itemData(index)
-    #         self.apply_log_filter()
-
-    # def clear_log_filter(self):
-    #     """Сброс фильтра логов"""
-    #     self.log_filter_combo.setCurrentIndex(0)
-    #     self.current_log_filter = None
-    #     self.apply_log_filter()
 
     def apply_log_filter(self):
         """Применение комбинированного фильтра к отображаемым логам"""
@@ -2348,13 +2317,27 @@ class MainWindow(QMainWindow):
                 self.edit_service_dialog(service)
 
     def edit_service_dialog(self, service=None):
+        """Диалог создания или редактирования сервиса"""
+        is_new_service = service is None
+        
+        if is_new_service and self.project_data:
+            services = self.project_data.get("services", [])
+            max_order = max([s.get("order", 999) for s in services]) if services else 0
+            default_order = max_order + 1
+            temp_service = {"order": default_order}
+        else:
+            temp_service = service.copy() if service else {}
+        
         dialog = ServiceDialog(
             self,
-            service,
+            temp_service if is_new_service else service,
             self.project_data,
             self.project_data.get("root_dir") if self.project_data else None
         )
-
+        
+        if is_new_service:
+            dialog.setWindowTitle("Новый сервис")
+        
         if dialog.exec() == QDialog.Accepted:
             service_data = dialog.get_service_data()
 
@@ -2366,19 +2349,56 @@ class MainWindow(QMainWindow):
                 self.project_data = DEFAULT_CONFIG.copy()
 
             services = self.project_data.get("services", [])
+            new_order = service_data.get("order", 999)
+            
+            # Собираем существующие order, исключая текущий сервис при редактировании
+            exclude_name = service.get("name") if not is_new_service else None
+            existing_orders = self.get_existing_orders(exclude_name)
+            
+            # Проверяем конфликт по order
+            order_conflicts = [name for name, order in existing_orders.items() if order == new_order]
+            
+            if order_conflicts:
+                result = self.resolve_order_conflict(
+                    service_data["name"],
+                    new_order,
+                    existing_orders,
+                    exclude_name
+                )
+                
+                if result is None:
+                    return self.edit_service_dialog(service)
+                
+                if isinstance(result, int):
+                    service_data["order"] = result
 
-            if service:
+            # Сохраняем сервис
+            if is_new_service:
+                services.append(service_data)
+                self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис добавлен: {service_data['name']}")
+            else:
                 for i, s in enumerate(services):
                     if s.get("name") == service.get("name"):
                         services[i] = service_data
+                        self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис обновлен: {service_data['name']}")
                         break
-            else:
-                services.append(service_data)
 
             self.project_data["services"] = services
-            self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис {'обновлен' if service else 'добавлен'}: {service_data['name']}")
             self.save_project()
             self.refresh_display()
+
+    def get_existing_orders(self, exclude_name=None):
+        """Получить словарь {имя_сервиса: order} существующих сервисов"""
+        if not self.project_data:
+            return {}
+        
+        existing_orders = {}
+        for s in self.project_data.get("services", []):
+            if exclude_name and s.get("name") == exclude_name:
+                continue
+            existing_orders[s.get("name", "")] = s.get("order", 999)
+        
+        return existing_orders
 
     def delete_service(self):
         current = self.services_tree.currentItem()
@@ -2445,27 +2465,213 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Ошибка", f"Не удалось экспортировать: {e}")
 
     def import_service(self):
+        """Импорт сервиса с возможностью предварительного редактирования"""
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Выберите файл сервиса",
             str(SERVICES_DIR),
             "JSON files (*.json);;All files (*.*)"
         )
-        if filename:
-            try:
-                with open(filename, 'r', encoding='utf-8') as f:
-                    service_data = json.load(f)
+        if not filename:
+            return
 
-                if self.project_data:
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                service_data = json.load(f)
+
+            if not self.project_data:
+                self.project_data = DEFAULT_CONFIG.copy()
+
+            existing_service = self.find_service_by_name(service_data.get("name", ""))
+            overwrite_existing = False
+            
+            if existing_service:
+                reply = QMessageBox.question(
+                    self,
+                    "Сервис уже существует",
+                    f"Сервис с именем '{service_data.get('name')}' уже существует в проекте.\n\n"
+                    f"Хотите перезаписать его?",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Cancel:
+                    return
+                elif reply == QMessageBox.Yes:
+                    overwrite_existing = True
+                else:
+                    new_name, ok = QInputDialog.getText(
+                        self,
+                        "Новое имя сервиса",
+                        "Введите новое имя для импортируемого сервиса:",
+                        text=service_data.get("name", "") + "_imported"
+                    )
+                    if ok and new_name:
+                        service_data["name"] = new_name
+                    else:
+                        return
+
+            imported_order = service_data.get("order", 999)
+            exclude_name = existing_service.get("name") if overwrite_existing else None
+            existing_orders = self.get_existing_orders(exclude_name)
+            
+            order_conflicts = [name for name, order in existing_orders.items() if order == imported_order]
+            
+            if order_conflicts:
+                result = self.resolve_order_conflict(
+                    service_data["name"],
+                    imported_order,
+                    existing_orders,
+                    exclude_name
+                )
+                
+                if result is None:
+                    return
+                
+                if isinstance(result, int):
+                    service_data["order"] = result
+
+            dialog = ServiceDialog(
+                self,
+                service_data,
+                self.project_data,
+                self.project_data.get("root_dir")
+            )
+            dialog.setWindowTitle(f"Редактирование импортируемого сервиса: {service_data.get('name', '')}")
+
+            if dialog.exec() == QDialog.Accepted:
+                edited_service_data = dialog.get_service_data()
+
+                if not edited_service_data["name"] or not edited_service_data["script"]:
+                    QMessageBox.warning(self, "Ошибка", "Имя и путь к скрипту обязательны")
+                    return
+
+                services = self.project_data.get("services", [])
+                final_order = edited_service_data.get("order", 999)
+                
+                final_existing_orders = self.get_existing_orders(
+                    existing_service.get("name") if overwrite_existing else None
+                )
+                
+                final_order_conflicts = [name for name, order in final_existing_orders.items() if order == final_order]
+                
+                if final_order_conflicts:
+                    result = self.resolve_order_conflict(
+                        edited_service_data["name"],
+                        final_order,
+                        final_existing_orders,
+                        existing_service.get("name") if overwrite_existing else None
+                    )
+                    
+                    if result is None:
+                        return self.import_service()
+                    
+                    if isinstance(result, int):
+                        edited_service_data["order"] = result
+                
+                if overwrite_existing:
+                    for i, s in enumerate(services):
+                        if s.get("name") == existing_service.get("name"):
+                            services[i] = edited_service_data
+                            self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис обновлен при импорте: {edited_service_data['name']}")
+                            break
+                else:
+                    services.append(edited_service_data)
+                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован сервис: {edited_service_data['name']}")
+
+                self.project_data["services"] = services
+                self.save_project()
+                self.refresh_display()
+
+        except json.JSONDecodeError as e:
+            QMessageBox.critical(self, "Ошибка", f"Неверный формат JSON файла:\n{e}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось импортировать сервис:\n{e}")
+
+    def resolve_order_conflict(self, service_name, conflict_order, existing_orders, exclude_name=None):
+        """
+        Универсальный диалог разрешения конфликта порядка запуска.
+        Используется при импорте, создании и редактировании сервиса.
+        
+        Возвращает:
+            int - новый order (если выбран номер без конфликта)
+            True - если применено смещение существующих сервисов
+            None - если пользователь отменил операцию
+        """
+        max_order = max(existing_orders.values()) if existing_orders else 0
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Конфликт порядка запуска")
+        dialog.setMinimumWidth(500)
+        dialog.setMinimumHeight(400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        info_label = QLabel(
+            f"Сервис '{service_name}' имеет порядок запуска: {conflict_order}\n"
+            f"Этот номер уже используется одним из существющих сервисов."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        layout.addWidget(QLabel("\nСервисы:"))
+        
+        services_list = QListWidget()
+        services_list.setSelectionMode(QListWidget.NoSelection)
+        
+        sorted_services = sorted(existing_orders.items(), key=lambda x: x[1])
+        for name, order in sorted_services:
+            marker = "⚠️ " if order == conflict_order else "   "
+            services_list.addItem(f"{marker}{name}: order = {order}")
+        
+        layout.addWidget(services_list)
+        
+        layout.addWidget(QLabel("\nВведите новый порядок запуска:"))
+        
+        order_input = QSpinBox()
+        order_input.setRange(0, 9999)
+        order_input.setValue(max_order + 1)
+        layout.addWidget(order_input)
+        
+        hint_label = QLabel(f"Рекомендуемое значение: {max_order + 1} (следующий за максимальным)")
+        hint_label.setStyleSheet("color: #666; font-size: 10px;")
+        layout.addWidget(hint_label)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        
+        while True:
+            if dialog.exec() == QDialog.Accepted:
+                selected_order = order_input.value()
+                
+                conflicts = [name for name, order in existing_orders.items() if order == selected_order]
+                
+                if not conflicts:
+                    return selected_order
+                
+                reply = QMessageBox.question(
+                    self,
+                    "Номер уже существует",
+                    f"Номер {selected_order} уже используется сервисами:\n" +
+                    "\n".join([f"• {name}" for name in conflicts]) +
+                    f"\n\nТекущая последовательность будет смещена относительно номера {selected_order}.\n"
+                    f"Продолжить?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
                     services = self.project_data.get("services", [])
-                    services.append(service_data)
-                    self.project_data["services"] = services
-                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован сервис: {service_data.get('name')}")
-                    self.save_project()
-                    self.refresh_display()
-
-            except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Не удалось импортировать сервис: {e}")
+                    for s in services:
+                        if exclude_name and s.get("name") == exclude_name:
+                            continue
+                        if s.get("order", 999) >= selected_order:
+                            s["order"] = s.get("order", 999) + 1
+                    return True
+            else:
+                return None
 
     def project_settings(self):
         if not self.project_data:
@@ -2819,24 +3025,6 @@ class MainWindow(QMainWindow):
 
         self.cleanup_and_exit(event)
 
-    # def on_custom_filter_changed(self, text):
-    #     """Обработка изменения текстового фильтра"""
-    #     self.custom_filter_text = text.strip()
-    #     self.apply_log_filter()
-
-    # def clear_all_filters(self):
-    #     """Сброс всех фильтров (выпадающего списка и текстового)"""
-    #     # Сбрасываем выпадающий список
-    #     self.log_filter_combo.setCurrentIndex(0)
-    #     self.current_log_filter = None
-    #
-    #     # Очищаем текстовое поле
-    #     self.custom_filter_edit.clear()
-    #     self.custom_filter_text = ""
-    #
-    #     # Применяем фильтр (покажет все логи)
-    #     self.apply_log_filter()
-
     def clear_log_filter(self):
         """Сброс фильтра логов (оставляем для обратной совместимости)"""
         self.clear_all_filters()
@@ -2862,26 +3050,6 @@ class MainWindow(QMainWindow):
         # Перекомпилируем регулярное выражение и применяем фильтр
         self.compile_regex()
         self.apply_log_filter()
-
-    # def compile_regex(self):
-    #     """Компиляция регулярного выражения"""
-    #     self.compiled_regex = None
-    #
-    #     if self.use_regexp and self.custom_filter_text:
-    #         try:
-    #             self.compiled_regex = re.compile(self.custom_filter_text, re.IGNORECASE)
-    #             # Убираем красную подсветку если была ошибка
-    #             self.custom_filter_edit.setStyleSheet("")
-    #         except re.error as e:
-    #             # Подсвечиваем поле красным при ошибке regexp
-    #             self.custom_filter_edit.setStyleSheet("""
-    #                 QLineEdit {
-    #                     border: 1px solid red;
-    #                     background-color: #ffe6e6;
-    #                 }
-    #             """)
-    #             self.log(f"[Service Launcher]{' ' * (GAP - 18)} Ошибка регулярного выражения: {e}", "error")
-    #             self.compiled_regex = None
 
     def on_custom_filter_changed(self, text):
         """Обработка изменения текстового фильтра"""
@@ -3109,6 +3277,77 @@ class MainWindow(QMainWindow):
         except:
             pass
         return None
+
+    def export_service(self):
+        """Экспорт выбранного сервиса в отдельный файл"""
+        current = self.services_tree.currentItem()
+        if not current:
+            QMessageBox.warning(self, "Предупреждение", "Выберите сервис для экспорта")
+            return
+
+        service_name = current.text(3)
+        service = self.find_service_by_name(service_name)
+        if not service:
+            QMessageBox.warning(self, "Ошибка", f"Сервис '{service_name}' не найден")
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Экспорт сервиса",
+            str(SERVICES_DIR / f"{service_name}.json"),
+            "JSON files (*.json);;All files (*.*)"
+        )
+
+        if filename:
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(service, f, ensure_ascii=False, indent=2)
+                self.log(
+                    f"[Service Launcher]{' ' * (GAP - 18)} Экспортирован сервис: {service_name} -> {Path(filename).name}")
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось экспортировать сервис: {e}")
+
+    def reorder_services(self):
+        """Перенумерация порядка запуска сервисов от 1 до N"""
+        if not self.project_data:
+            QMessageBox.warning(self, "Предупреждение", "Нет загруженного проекта")
+            return
+
+        services = self.project_data.get("services", [])
+        if not services:
+            QMessageBox.information(self, "Информация", "В проекте нет сервисов")
+            return
+
+        # Сортируем сервисы по текущему order
+        sorted_services = sorted(services, key=lambda x: x.get("order", 999))
+
+        # Показываем предпросмотр изменений
+        preview_text = "Будет выполнена перенумерация сервисов:\n\n"
+        preview_text += "Текущий порядок → Новый порядок\n"
+        preview_text += "-" * 40 + "\n"
+
+        for i, service in enumerate(sorted_services, 1):
+            old_order = service.get("order", 999)
+            preview_text += f"{service.get('name', 'Unknown')}: {old_order} → {i}\n"
+
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение перенумерации",
+            preview_text + "\nПродолжить?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            # Применяем новые номера
+            for i, service in enumerate(sorted_services, 1):
+                service["order"] = i
+
+            self.project_data["services"] = sorted_services
+
+            self.log(f"[Service Launcher]{' ' * (GAP - 18)} Выполнена перенумерация {len(services)} сервисов")
+            self.save_project()
+            self.refresh_display()
 
 
 def main():
