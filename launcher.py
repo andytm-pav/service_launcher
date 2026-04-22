@@ -1763,7 +1763,7 @@ class MainWindow(QMainWindow):
 
                     if not self._is_closing:
                         for service_name in dead_services:
-                            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⏹️ Сервис {service_name} остановлен", "warning")
+                            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ◼️ Сервис {service_name} остановлен", "warning")
                         QTimer.singleShot(0, self.refresh_display)
                         QTimer.singleShot(5000, self.refresh_display)  # FIXME: здесь не работает?
                         self.refresh_display()  # FIXME: здесь не работает?
