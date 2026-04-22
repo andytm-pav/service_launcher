@@ -1675,8 +1675,8 @@ class MainWindow(QMainWindow):
 
         start_btn = QPushButton("▶️")
         start_btn.setFixedSize(28, 28)
-        start_btn.setToolTip("Запустить")
-        start_btn.clicked.connect(lambda checked, s=service: self.start_service(s))
+        start_btn.setToolTip("Запустить\nAlt+клик: запустить без зависимостей")
+        start_btn.clicked.connect(lambda checked, s=service: self.on_start_button_clicked(s))
         actions_layout.addWidget(start_btn)
 
         stop_btn = QPushButton("⏹️")
@@ -1763,11 +1763,14 @@ class MainWindow(QMainWindow):
 
                     if not self._is_closing:
                         for service_name in dead_services:
-                            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} 💀 Сервис {service_name} завершился", "warning")
+                            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} ⏹️ Сервис {service_name} остановлен", "warning")
                         QTimer.singleShot(0, self.refresh_display)
+                        QTimer.singleShot(5000, self.refresh_display)  # FIXME: здесь не работает?
+                        self.refresh_display()  # FIXME: здесь не работает?
                 else:
                     # Периодически обновляем отображение для обновления service info
                     QTimer.singleShot(0, self.refresh_display)
+                    # self.refresh_display()
 
         self.monitor_stop_event.clear()
         self.monitor_thread = threading.Thread(target=monitor, daemon=True)
@@ -3315,18 +3318,25 @@ class MainWindow(QMainWindow):
         if not item:
             return
 
-        service_name = item.text(3)  # Изменено с 1 на 3 (колонка "Сервис")
+        service_name = item.text(3)
         service = self.find_service_by_name(service_name)
         if not service:
             return
 
         menu = QMenu()
 
+        modifiers = QApplication.keyboardModifiers()
+
+        # if modifiers == Qt.AltModifier:
+        #     start_action = menu.addAction("▶️ Запустить (без зависимостей)")
+        #     start_action.triggered.connect(lambda: self.start_service_without_dependencies(service))
+        # else:
         start_action = menu.addAction("▶️ Запустить")
         start_action.triggered.connect(lambda: self.start_service(service))
 
         stop_action = menu.addAction("⏹️ Остановить")
         stop_action.triggered.connect(lambda: self.stop_service(service))
+
 
         restart_action = menu.addAction("🔄 Перезапустить")
         restart_action.triggered.connect(lambda: self.restart_service(service))
@@ -3336,7 +3346,6 @@ class MainWindow(QMainWindow):
         edit_action = menu.addAction("⚙️ Редактировать")
         edit_action.triggered.connect(lambda: self.edit_service_dialog(service))
 
-        # Добавляем Swagger в контекстное меню если есть health_path
         health_path = service.get("health_path", "").strip()
         if health_path:
             swagger_action = menu.addAction("📊 Открыть Swagger")
@@ -3634,6 +3643,42 @@ class MainWindow(QMainWindow):
             self.project_data["host_mapping"] = new_mapping
             self.save_project()
             self.log(f"[Service Launcher]{' ' * (GAP - 18)} Маппинг хостов обновлен")
+
+    def on_start_button_clicked(self, service):
+        """Обработчик клика по кнопке запуска с проверкой модификаторов"""
+        modifiers = QApplication.keyboardModifiers()
+
+        if modifiers == Qt.AltModifier:
+            # Запуск без зависимостей
+            self.start_service_without_dependencies(service)
+        else:
+            # Обычный запуск с зависимостями
+            self.start_service(service)
+
+    def start_service_without_dependencies(self, service):
+        """Запуск сервиса без запуска зависимостей"""
+        if self._is_closing:
+            return False
+
+        service_name = service.get("name")
+
+        if self.is_service_running(service_name):
+            self.log(f"[{service_name}]{' ' * (GAP - 2 - len(service_name))} Сервис {service_name} уже запущен")
+            return True
+
+        if service_name in self.starting_services:
+            self.log(f"[{service_name}]{' ' * (GAP - 2 - len(service_name))} Сервис {service_name} уже запускается")
+            return True
+
+        # Проверяем зависимости, но только для информации
+        deps = service.get("dependencies", [])
+        if deps:
+            dep_names = ", ".join(deps)
+            self.log(f"[{service_name}]{' ' * (GAP - 2 - len(service_name))} ⚠️ Запуск без зависимостей: {dep_names}",
+                     "warning")
+
+        # Запускаем сервис напрямую
+        return self.start_single_service(service)
 
 
 def main():
