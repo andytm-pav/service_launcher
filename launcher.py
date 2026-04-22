@@ -19,9 +19,9 @@ import time
 import socket
 import json
 import signal
-from os import terminal_size
+# from os import terminal_size
 import re
-import webbrowser  # Добавляем импорт
+# import webbrowser  # Добавляем импорт
 import base64
 
 import psutil
@@ -35,7 +35,8 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QMessageBox, QFileDialog, QInputDialog,
     QLineEdit, QSpinBox, QCheckBox, QSplitter, QHeaderView,
     QListWidget, QListWidgetItem, QFormLayout, QPlainTextEdit, QSizePolicy,
-    QMenuBar, QMenu
+    QMenu, QTableWidget, QTableWidgetItem
+    # , QMenuBar
 )
 from PySide6.QtCore import (
     Qt, QTimer, QThread, Signal, QEvent
@@ -654,6 +655,9 @@ class MainWindow(QMainWindow):
         self.custom_filter_text = ""    # Текст кастомного фильтра
         self.use_regexp = False         # Флаг использования регулярных выражений
         self.compiled_regex = None      # Скомпилированное регулярное выражение
+
+        self.host_aliases_cache = {}
+        self.host_mapping_hash = None
     
         self.start_all_btn = QPushButton("▶️ Запустить все")
         self.stop_all_btn = QPushButton("⏹️ Остановить все")
@@ -1164,9 +1168,9 @@ class MainWindow(QMainWindow):
         project_settings_action.triggered.connect(self.project_settings)
         settings_menu.addAction(project_settings_action)
 
-        # ping_filters_action = QAction("Настройка фильтров пингов", self)
-        # ping_filters_action.triggered.connect(self.edit_ping_filters)
-        # settings_menu.addAction(ping_filters_action)
+        host_mapping_action = QAction("Маппинг хостов", self)
+        host_mapping_action.triggered.connect(self.edit_host_mapping)
+        settings_menu.addAction(host_mapping_action)
 
         global_settings_action = QAction("Глобальные настройки", self)
         global_settings_action.triggered.connect(self.global_settings)
@@ -2319,7 +2323,7 @@ class MainWindow(QMainWindow):
     def edit_service_dialog(self, service=None):
         """Диалог создания или редактирования сервиса"""
         is_new_service = service is None
-        
+
         if is_new_service and self.project_data:
             services = self.project_data.get("services", [])
             max_order = max([s.get("order", 999) for s in services]) if services else 0
@@ -2327,65 +2331,124 @@ class MainWindow(QMainWindow):
             temp_service = {"order": default_order}
         else:
             temp_service = service.copy() if service else {}
-        
-        dialog = ServiceDialog(
-            self,
-            temp_service if is_new_service else service,
-            self.project_data,
-            self.project_data.get("root_dir") if self.project_data else None
-        )
-        
-        if is_new_service:
-            dialog.setWindowTitle("Новый сервис")
-        
-        if dialog.exec() == QDialog.Accepted:
+
+        while True:
+            dialog = ServiceDialog(
+                self,
+                temp_service if is_new_service else service,
+                self.project_data,
+                self.project_data.get("root_dir") if self.project_data else None
+            )
+
+            if is_new_service:
+                dialog.setWindowTitle("Новый сервис")
+
+            if dialog.exec() != QDialog.Accepted:
+                return
+
             service_data = dialog.get_service_data()
 
             if not service_data["name"] or not service_data["script"]:
                 QMessageBox.warning(self, "Ошибка", "Имя и путь к скрипту обязательны")
-                return
+                temp_service = service_data
+                continue
 
             if not self.project_data:
                 self.project_data = DEFAULT_CONFIG.copy()
 
             services = self.project_data.get("services", [])
-            new_order = service_data.get("order", 999)
-            
-            # Собираем существующие order, исключая текущий сервис при редактировании
-            exclude_name = service.get("name") if not is_new_service else None
-            existing_orders = self.get_existing_orders(exclude_name)
-            
-            # Проверяем конфликт по order
-            order_conflicts = [name for name, order in existing_orders.items() if order == new_order]
-            
-            if order_conflicts:
-                result = self.resolve_order_conflict(
-                    service_data["name"],
-                    new_order,
-                    existing_orders,
-                    exclude_name
+
+            # Проверяем дублирование имени
+            name_conflict = False
+            name_conflict_service = None
+            for s in services:
+                if not is_new_service and s.get("name") == service.get("name"):
+                    continue
+                if s.get("name") == service_data["name"]:
+                    name_conflict = True
+                    name_conflict_service = s
+                    break
+
+            if name_conflict:
+                reply = QMessageBox.question(
+                    self,
+                    "Дублирование имени",
+                    f"Сервис с именем '{service_data['name']}' уже существует.\n\n"
+                    f"Хотите перезаписать существующий сервис?",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.No
                 )
-                
-                if result is None:
-                    return self.edit_service_dialog(service)
-                
-                if isinstance(result, int):
-                    service_data["order"] = result
 
-            # Сохраняем сервис
-            if is_new_service:
+                if reply == QMessageBox.Cancel:
+                    return
+                elif reply == QMessageBox.No:
+                    temp_service = service_data
+                    continue
+                elif reply == QMessageBox.Yes:
+                    services.remove(name_conflict_service)
+                    self.log(
+                        f"[Service Launcher]{' ' * (GAP - 18)} Сервис '{name_conflict_service.get('name')}' будет заменен")
+                    name_conflict = False
+
+            # Проверяем конфликт host:port
+            exclude_name = service.get("name") if not is_new_service else None
+            conflict_service = self.check_host_port_conflict(service_data, exclude_name)
+
+            if conflict_service:
+                host = service_data.get("host", "127.0.0.1")
+                port = service_data.get("port")
+
+                QMessageBox.warning(
+                    self,
+                    "Конфликт host:port",
+                    f"Комбинация {host}:{port} уже используется сервисом '{conflict_service}'.\n\n"
+                    f"Согласно маппингу хостов эти адреса эквивалентны.\n"
+                    f"Измените хост или порт."
+                )
+                temp_service = service_data
+                continue
+
+            if not name_conflict:
+                break
+
+        new_order = service_data.get("order", 999)
+        existing_orders = self.get_existing_orders(exclude_name)
+        order_conflicts = [name for name, order in existing_orders.items() if order == new_order]
+
+        if order_conflicts:
+            result = self.resolve_order_conflict(
+                service_data["name"],
+                new_order,
+                existing_orders,
+                exclude_name
+            )
+
+            if result is None:
+                return self.edit_service_dialog(service)
+
+            if isinstance(result, int):
+                service_data["order"] = result
+
+        # Сохраняем сервис
+        if is_new_service:
+            services.append(service_data)
+            self.log(f"[Service Launcher]{' ' * (GAP - 18)} Сервис добавлен: {service_data['name']}")
+        else:
+            service_exists = False
+            for i, s in enumerate(services):
+                if s.get("name") == service.get("name"):
+                    services[i] = service_data
+                    service_exists = True
+                    self.log(f"[Service Launcher]{' ' * (GAP - 18)} Сервис обновлен: {service_data['name']}")
+                    break
+
+            if not service_exists:
                 services.append(service_data)
-                self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис добавлен: {service_data['name']}")
-            else:
-                for i, s in enumerate(services):
-                    if s.get("name") == service.get("name"):
-                        services[i] = service_data
-                        self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис обновлен: {service_data['name']}")
-                        break
+                self.log(f"[Service Launcher]{' ' * (GAP - 18)} Сервис добавлен (замена): {service_data['name']}")
 
-            self.project_data["services"] = services
-            self.save_project()
-            self.refresh_display()
+        self.project_data["services"] = services
+        self.save_project()
+        self.refresh_display()
 
     def get_existing_orders(self, exclude_name=None):
         """Получить словарь {имя_сервиса: order} существующих сервисов"""
@@ -2484,7 +2547,7 @@ class MainWindow(QMainWindow):
 
             existing_service = self.find_service_by_name(service_data.get("name", ""))
             overwrite_existing = False
-            
+
             if existing_service:
                 reply = QMessageBox.question(
                     self,
@@ -2494,7 +2557,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
                     QMessageBox.No
                 )
-                
+
                 if reply == QMessageBox.Cancel:
                     return
                 elif reply == QMessageBox.Yes:
@@ -2514,9 +2577,9 @@ class MainWindow(QMainWindow):
             imported_order = service_data.get("order", 999)
             exclude_name = existing_service.get("name") if overwrite_existing else None
             existing_orders = self.get_existing_orders(exclude_name)
-            
+
             order_conflicts = [name for name, order in existing_orders.items() if order == imported_order]
-            
+
             if order_conflicts:
                 result = self.resolve_order_conflict(
                     service_data["name"],
@@ -2524,37 +2587,61 @@ class MainWindow(QMainWindow):
                     existing_orders,
                     exclude_name
                 )
-                
+
                 if result is None:
                     return
-                
+
                 if isinstance(result, int):
                     service_data["order"] = result
 
-            dialog = ServiceDialog(
-                self,
-                service_data,
-                self.project_data,
-                self.project_data.get("root_dir")
-            )
-            dialog.setWindowTitle(f"Редактирование импортируемого сервиса: {service_data.get('name', '')}")
+            while True:
+                dialog = ServiceDialog(
+                    self,
+                    service_data,
+                    self.project_data,
+                    self.project_data.get("root_dir")
+                )
+                dialog.setWindowTitle(f"Редактирование импортируемого сервиса: {service_data.get('name', '')}")
 
-            if dialog.exec() == QDialog.Accepted:
+                if dialog.exec() != QDialog.Accepted:
+                    return
+
                 edited_service_data = dialog.get_service_data()
 
                 if not edited_service_data["name"] or not edited_service_data["script"]:
                     QMessageBox.warning(self, "Ошибка", "Имя и путь к скрипту обязательны")
-                    return
+                    service_data = edited_service_data
+                    continue
 
                 services = self.project_data.get("services", [])
+
+                # Проверяем конфликт host:port
+                conflict_service = self.check_host_port_conflict(
+                    edited_service_data,
+                    existing_service.get("name") if overwrite_existing else None
+                )
+
+                if conflict_service:
+                    host = edited_service_data.get("host", "127.0.0.1")
+                    port = edited_service_data.get("port")
+
+                    QMessageBox.warning(
+                        self,
+                        "Конфликт host:port",
+                        f"Комбинация {host}:{port} уже используется сервисом '{conflict_service}'.\n\n"
+                        f"Согласно маппингу хостов эти адреса эквивалентны.\n"
+                        f"Измените хост или порт."
+                    )
+                    service_data = edited_service_data
+                    continue
+
                 final_order = edited_service_data.get("order", 999)
-                
                 final_existing_orders = self.get_existing_orders(
                     existing_service.get("name") if overwrite_existing else None
                 )
-                
+
                 final_order_conflicts = [name for name, order in final_existing_orders.items() if order == final_order]
-                
+
                 if final_order_conflicts:
                     result = self.resolve_order_conflict(
                         edited_service_data["name"],
@@ -2562,26 +2649,28 @@ class MainWindow(QMainWindow):
                         final_existing_orders,
                         existing_service.get("name") if overwrite_existing else None
                     )
-                    
+
                     if result is None:
                         return self.import_service()
-                    
+
                     if isinstance(result, int):
                         edited_service_data["order"] = result
-                
+
                 if overwrite_existing:
                     for i, s in enumerate(services):
                         if s.get("name") == existing_service.get("name"):
                             services[i] = edited_service_data
-                            self.log(f"[Service Launcher]{' '*(GAP-18)} Сервис обновлен при импорте: {edited_service_data['name']}")
+                            self.log(
+                                f"[Service Launcher]{' ' * (GAP - 18)} Сервис обновлен при импорте: {edited_service_data['name']}")
                             break
                 else:
                     services.append(edited_service_data)
-                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован сервис: {edited_service_data['name']}")
+                    self.log(f"[Service Launcher]{' ' * (GAP - 18)} Импортирован сервис: {edited_service_data['name']}")
 
                 self.project_data["services"] = services
                 self.save_project()
                 self.refresh_display()
+                break
 
         except json.JSONDecodeError as e:
             QMessageBox.critical(self, "Ошибка", f"Неверный формат JSON файла:\n{e}")
@@ -3348,6 +3437,203 @@ class MainWindow(QMainWindow):
             self.log(f"[Service Launcher]{' ' * (GAP - 18)} Выполнена перенумерация {len(services)} сервисов")
             self.save_project()
             self.refresh_display()
+
+    def get_host_aliases(self, host):
+        """Получить все алиасы хоста включая транзитивный маппинг"""
+        if not self.project_data:
+            return {host}
+
+        host_mapping = self.project_data.get("host_mapping", {})
+
+        # Проверяем, не изменился ли маппинг
+        current_hash = hash(frozenset(host_mapping.items()))
+        if self.host_mapping_hash != current_hash:
+            self.host_aliases_cache.clear()
+            self.host_mapping_hash = current_hash
+
+        # Проверяем кеш
+        if host in self.host_aliases_cache:
+            return self.host_aliases_cache[host]
+
+        # Строим полный граф связей
+        connections = {}
+
+        # Добавляем все пары из маппинга
+        for h1, h2 in host_mapping.items():
+            if h1 not in connections:
+                connections[h1] = set()
+            if h2 not in connections:
+                connections[h2] = set()
+            connections[h1].add(h2)
+            connections[h2].add(h1)
+
+        # Находим компоненту связности для заданного хоста
+        def bfs(start):
+            visited = set()
+            queue = [start]
+            visited.add(start)
+
+            while queue:
+                current = queue.pop(0)
+                if current in connections:
+                    for neighbor in connections[current]:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            queue.append(neighbor)
+
+            return visited
+
+        aliases = bfs(host)
+
+        # Кешируем результат для всех хостов в этой компоненте связности
+        for h in aliases:
+            self.host_aliases_cache[h] = aliases
+
+        return aliases
+
+    def check_host_port_conflict(self, service_data, exclude_name=None):
+        """Проверить конфликт host:port с учетом маппинга"""
+        if not self.project_data:
+            return None
+
+        host = service_data.get("host", "127.0.0.1")
+        port = service_data.get("port")
+
+        if not port:
+            return None
+
+        service_aliases = self.get_host_aliases(host)
+
+        for service in self.project_data.get("services", []):
+            if exclude_name and service.get("name") == exclude_name:
+                continue
+
+            existing_port = service.get("port")
+            if not existing_port or existing_port != port:
+                continue
+
+            existing_host = service.get("host", "127.0.0.1")
+            existing_aliases = self.get_host_aliases(existing_host)
+
+            # Проверяем пересечение алиасов
+            if service_aliases & existing_aliases:
+                return service.get("name")
+
+        return None
+
+    def edit_host_mapping(self):
+        """Диалог редактирования маппинга хостов"""
+        if not self.project_data:
+            QMessageBox.warning(self, "Предупреждение", "Нет загруженного проекта")
+            return
+
+        if "host_mapping" not in self.project_data:
+            self.project_data["host_mapping"] = DEFAULT_CONFIG["host_mapping"].copy()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Маппинг хостов")
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(400)
+
+        layout = QVBoxLayout(dialog)
+
+        info_label = QLabel(
+            "Настройка эквивалентности хостов для проверки уникальности host:port.\n"
+            "Хосты из одной строки считаются идентичными при проверке конфликтов."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # Таблица маппинга
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.setHorizontalHeaderLabels(["Исходный хост", "Эквивалентный хост"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(table)
+
+        # Заполняем таблицу
+        host_mapping = self.project_data.get("host_mapping", {})
+        for host, alias in host_mapping.items():
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(host))
+            table.setItem(row, 1, QTableWidgetItem(alias))
+
+        # Кнопки управления
+        btn_layout = QHBoxLayout()
+
+        add_btn = QPushButton("Добавить")
+        edit_btn = QPushButton("Редактировать")
+        delete_btn = QPushButton("Удалить")
+
+        btn_layout.addWidget(add_btn)
+        btn_layout.addWidget(edit_btn)
+        btn_layout.addWidget(delete_btn)
+        btn_layout.addStretch()
+
+        layout.addLayout(btn_layout)
+
+        def add_mapping():
+            host, ok1 = QInputDialog.getText(dialog, "Добавить маппинг", "Исходный хост:")
+            if not ok1 or not host:
+                return
+
+            alias, ok2 = QInputDialog.getText(dialog, "Добавить маппинг", "Эквивалентный хост:")
+            if not ok2 or not alias:
+                return
+
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(host.strip()))
+            table.setItem(row, 1, QTableWidgetItem(alias.strip()))
+
+        def edit_mapping():
+            current = table.currentRow()
+            if current < 0:
+                QMessageBox.warning(dialog, "Предупреждение", "Выберите строку для редактирования")
+                return
+
+            host = table.item(current, 0).text()
+            alias = table.item(current, 1).text()
+
+            new_host, ok1 = QInputDialog.getText(dialog, "Редактировать маппинг", "Исходный хост:", text=host)
+            if not ok1:
+                return
+
+            new_alias, ok2 = QInputDialog.getText(dialog, "Редактировать маппинг", "Эквивалентный хост:", text=alias)
+            if not ok2:
+                return
+
+            table.setItem(current, 0, QTableWidgetItem(new_host.strip()))
+            table.setItem(current, 1, QTableWidgetItem(new_alias.strip()))
+
+        def delete_mapping():
+            current = table.currentRow()
+            if current >= 0:
+                table.removeRow(current)
+
+        add_btn.clicked.connect(add_mapping)
+        edit_btn.clicked.connect(edit_mapping)
+        delete_btn.clicked.connect(delete_mapping)
+
+        # Кнопки OK/Cancel
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() == QDialog.Accepted:
+            # Сохраняем маппинг
+            new_mapping = {}
+            for row in range(table.rowCount()):
+                host = table.item(row, 0).text().strip()
+                alias = table.item(row, 1).text().strip()
+                if host and alias:
+                    new_mapping[host] = alias
+
+            self.project_data["host_mapping"] = new_mapping
+            self.save_project()
+            self.log(f"[Service Launcher]{' ' * (GAP - 18)} Маппинг хостов обновлен")
 
 
 def main():
