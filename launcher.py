@@ -2397,9 +2397,9 @@ class MainWindow(QMainWindow):
             services = self.project_data.get("services", [])
             services = [s for s in services if s.get("name") != service_name]
             self.project_data["services"] = services
+            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис удален: {service_name}")
             self.save_project()
             self.refresh_display()
-            self.log(f"[{service_name}]{' '*(GAP-2-len(service_name))} Сервис удален: {service_name}")
 
     def import_config(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -2460,9 +2460,9 @@ class MainWindow(QMainWindow):
                     services = self.project_data.get("services", [])
                     services.append(service_data)
                     self.project_data["services"] = services
+                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован сервис: {service_data.get('name')}")
                     self.save_project()
                     self.refresh_display()
-                    self.log(f"[Service Launcher]{' '*(GAP-18)} Импортирован сервис: {service_data.get('name')}")
 
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Не удалось импортировать сервис: {e}")
@@ -2476,8 +2476,9 @@ class MainWindow(QMainWindow):
 
         if dialog.exec() == QDialog.Accepted:
             self.project_data["settings"] = dialog.get_settings()
-            self.save_project()
             self.log("Service Launcher: Настройки проекта сохранены")
+            self.save_project()
+            self.refresh_display()
 
     def global_settings(self):
         QMessageBox.information(self, "Информация", "Глобальные настройки будут доступны в следующей версии")
