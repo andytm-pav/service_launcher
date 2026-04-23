@@ -2949,8 +2949,40 @@ class MainWindow(QMainWindow):
         # print("[DEBUG] ====================")
 
     def closeEvent(self, event):
-        """Handle application close - корректная остановка всех сервисов"""
+        """Handle application close с диалогом подтверждения"""
         if self._closing_started:
+            event.ignore()
+            return
+
+        # Проверяем, есть ли запущенные сервисы
+        running_services = []
+        if self.project_data:
+            for service in self.project_data.get("services", []):
+                service_name = service.get("name")
+                with self.process_lock:
+                    if service_name in self.service_root_pids:
+                        running_services.append(service_name)
+
+        # Формируем сообщение
+        if running_services:
+            message = f"Запущено сервисов: {len(running_services)}\n\n"
+            message += "Запущенные сервисы:\n"
+            for name in running_services:
+                message += f"  • {name}\n"
+            message += "\nПри закрытии все сервисы будут остановлены.\n"
+            message += "Вы уверены, что хотите выйти?"
+        else:
+            message = "Нет запущенных сервисов.\n\nВы уверены, что хотите выйти?"
+
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение выхода",
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
             event.ignore()
             return
 
