@@ -1086,13 +1086,15 @@ class MainWindow(QMainWindow):
                 new_filters.append(filters_list.item(i).text())
 
             self.project_data["ping_filters"] = new_filters
+
+            self.log(f"[Service Launcher]{' ' * (GAP - 18)} Фильтры пингов обновлены")
+
             self.save_project()
 
             # Переприменяем фильтр логов
             if self.hide_health_checks:
                 self.apply_log_filter()
 
-            self.log(f"[Service Launcher]{' ' * (GAP - 18)} Фильтры пингов обновлены")
 
     def setup_menu(self, menubar):
         # File menu
